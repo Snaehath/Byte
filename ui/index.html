@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Byte</title>
+    <link rel="stylesheet" href="style.css" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div class="assistant-widget visible" data-tauri-drag-region>
+      <!-- The glowing, morphing orb -->
+      <div class="orb-container" data-tauri-drag-region>
+        <div id="byte-orb" class="orb state-idle">
+          <div class="orb-core"></div>
+          <div class="orb-fluid-1"></div>
+          <div class="orb-fluid-2"></div>
+          <div class="orb-fluid-3"></div>
+          <div class="orb-glow-1"></div>
+          <div class="orb-glow-2"></div>
+          <div class="orb-logo">byte</div>
+        </div>
+      </div>
+
+      <!-- Minimal state text -->
+      <div class="status-label">
+        <span id="status-text">Click to speak</span>
+      </div>
+    </div>
+
+    <script src="main.js"></script>
+  </body>
+</html>

@@ -1,0 +1,70 @@
+# Byte: Desktop Voice Assistant & AI Companion
+
+**Byte** is a premium, local-first personal desktop AI voice companion and OS automation copilot for Windows built using **Rust (Tauri v2)** and **Vanilla Web Technologies (HTML/CSS/JS)**. It combines local hardware voice processing (Whisper STT and Piper TTS) with flexible local/cloud LLM intelligence (Qwen 3 4B via Ollama / OpenRouter / Nvidia NIM) to execute system actions, control windows, play music, analyze your screen, organize files, and engage in continuous voice conversation.
+
+> 📖 **Deep-Dive Engineering Guide**: For an exhaustive, step-by-step breakdown of the architecture, sequence diagrams, audio calibration, and tool sandbox, see [ARCHITECTURE_AND_WORKING.md](file:///d:/DevelopmentSide/AI-Studio/byte/ARCHITECTURE_AND_WORKING.md).
+
+---
+
+## Key Features
+
+### 🎙️ Conversational Voice Pipeline
+- **Local STT (Speech-to-Text)**: Automatically transcribes voice queries using a local `whisper-cli.exe` running the high-performance `ggml-tiny.en.bin` model (~200ms latency).
+- **Local TTS (Text-to-Speech)**: Plays natural spoken answers using `piper.exe` with standard high-quality `.onnx` voices (`en_US-lessac-medium.onnx`).
+- **Room-Noise Calibrated VAD**: Automatically calibrates ambient sound (200ms) and detects speech termination (1.5s trailing silence), ending recordings hands-free.
+- **Auto-Listen Followup**: Triggers the microphone automatically after non-destructive responses, enabling natural back-and-forth dialogue.
+- **Dynamic Mood & Presence**: Emits mood tags (`[MOOD: energetic/calm/thoughtful/apologetic]`) that dynamically shift the visual shader glow of the floating Byte Orb and adapt speech pacing.
+
+### 🛠️ Advanced Desktop Tools & OS Bridge
+Byte safely mediates system actions through strongly typed Rust tool handlers:
+
+- **Dynamic App Launcher (`open_application`)**: Scans Windows Start Menu shortcuts (`.lnk`) across both All Users and AppData directories to launch any installed program.
+- **Screen Vision (`analyze_screen`)**: Captures primary monitor screenshots via GDI+ and queries vision LLMs (Llama 3.2 Vision / Gemini Flash) to explain errors, code, or interfaces.
+- **Active Window Controller (`window_control`)**: Minimizes, maximizes, or closes foreground windows using Win32 API calls (`ShowWindow`, `PostMessage`).
+- **YouTube Autoplayer (`play_music`)**: Scrapes YouTube search results to locate matching video IDs and launches playback in your default browser.
+- **Hardware Telemetry (`get_system_stats`)**: Reads live CPU load percentage, RAM usage, and uptime via Windows Management Instrumentation (WMI/CIM).
+- **File Organizer (`organize_folder`)**: Safely sorts cluttered folders into categorized subdirectories (`Images`, `Documents`, `Media`, `Installers`, `Archives`) with confirmation gating.
+- **Desktop Wallpaper Changer (`change_wallpaper`)**: Rotates wallpapers from local folders or Picsum with an integrated non-destructive pixel-blending watermark eraser.
+- **System Control (`system_control`)**: Adjusts volume, mutes audio, controls media track playback, and changes monitor brightness via WMI.
+- **Persistent Memory (`update_memory`)**: Stores user preferences, name, habits, and past conversation sliding history in `byte_memory.json`.
+- **Utilities & Information**: Real-time timer (`set_timer`), clipboard manager (`clipboard_access`), system notifications (`show_notification`), Wikipedia reader (`wikipedia_search`), currency converter (`convert_currency`), and Google News reader (`read_news`).
+
+---
+
+## Tech Stack
+
+- **Frontend**: HTML5, Vanilla CSS3 (Glassmorphic Orb, Glow Shaders), Vanilla JavaScript, Tauri Event API.
+- **Backend**: Rust (Tauri v2, Tokio async runtime, CPAL audio capture, Hound, Rodio, Image).
+- **Speech-to-Text**: Whisper.cpp (`whisper-cli.exe` + `ggml-tiny.en.bin`).
+- **Text-to-Speech**: Piper TTS (`piper.exe` + `en_US-lessac-medium.onnx`).
+- **LLM Engine**: Local Ollama (`qwen3-4b:latest`) / OpenRouter / Nvidia NIM Vision.
+
+---
+
+## Configuration & Setup
+
+### Requirements
+- **OS**: Windows 10 / 11 (64-bit)
+- **Local STT / TTS**: 
+  - Place `whisper-cli.exe` and `ggml-tiny.en.bin` in `%APPDATA%\Byte\models\` or set `BYTE_WHISPER_EXE` and `BYTE_WHISPER_MODEL`.
+  - Place `piper.exe` and `en_US-lessac-medium.onnx` in `%APPDATA%\Byte\models\` or set `BYTE_PIPER_EXE` and `BYTE_PIPER_MODEL`.
+- **LLM Engine**:
+  - **Local**: Ollama running locally (`ollama run qwen3-4b` on port `11434`).
+  - **Cloud**: Set `OPENROUTER_API_KEY` or configure in `%APPDATA%\Byte\config\config.json`.
+
+### Running the App
+
+1. Run directly via Cargo:
+   ```bash
+   cd src-tauri
+   cargo run
+   ```
+
+2. Or run via Tauri CLI:
+   ```bash
+   npm install
+   npm run tauri dev
+   ```
+
+3. Toggle Byte anytime using the global hotkey: **`Ctrl + B`**.
+

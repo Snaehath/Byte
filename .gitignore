@@ -1,0 +1,38 @@
+# Build targets
+/target/
+/src-tauri/target/
+/src-tauri/gen/schemas
+
+# Environment variables and secrets
+.env
+.env.*
+*.env
+
+# Local runtime data, cache, logs, and temp files
+data/
+temp/
+logs/
+cache/
+*.wav
+*.mp3
+*.log
+byte_memory.json
+config.json
+
+# Local model weights and binaries
+*.bin
+*.onnx
+*.exe
+*.dll
+
+# IDE and OS metadata
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Node dependencies (if any)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
