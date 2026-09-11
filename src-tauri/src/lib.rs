@@ -42,6 +42,7 @@ pub struct AppState {
     pub mood: Arc<Mutex<String>>,
     pub pending_tool_call: Mutex<Option<tools::ToolCall>>,
     pub pending_tool_transcription: Mutex<Option<String>>,
+    pub active_interaction: Arc<Mutex<Option<crate::core::InteractionContext>>>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -72,6 +73,7 @@ pub fn run() {
             mood,
             pending_tool_call: Mutex::new(None),
             pending_tool_transcription: Mutex::new(None),
+            active_interaction: Arc::new(Mutex::new(None)),
         })
         .invoke_handler(tauri::generate_handler![
             commands::start_interaction,

@@ -1,30 +1,50 @@
 use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use rodio::{Decoder, OutputStream, Sink};
 use rodio::source::Source;
 
 static CANCEL_PLAYBACK: AtomicBool = AtomicBool::new(false);
+static ACTIVE_SINK: Mutex<Option<Arc<Sink>>> = Mutex::new(None);
+
+pub fn reset_cancellation() {
+    CANCEL_PLAYBACK.store(false, Ordering::SeqCst);
+}
 
 pub fn stop_audio() {
     CANCEL_PLAYBACK.store(true, Ordering::SeqCst);
+    if let Ok(mut guard) = ACTIVE_SINK.lock() {
+        if let Some(sink) = guard.take() {
+            sink.stop();
+        }
+    }
 }
 
 pub fn play_audio_file<P: AsRef<Path>>(file_path: P) {
     let path_ref = file_path.as_ref();
+    if CANCEL_PLAYBACK.load(Ordering::SeqCst) {
+        return;
+    }
     if let Ok(file) = File::open(path_ref) {
         if let Ok((_stream, stream_handle)) = OutputStream::try_default() {
             if let Ok(sink) = Sink::try_new(&stream_handle) {
                 if let Ok(source) = Decoder::new(BufReader::new(file)) {
-                    CANCEL_PLAYBACK.store(false, Ordering::SeqCst);
+                    let sink = Arc::new(sink);
+                    if let Ok(mut guard) = ACTIVE_SINK.lock() {
+                        *guard = Some(Arc::clone(&sink));
+                    }
                     sink.append(source);
                     while !sink.empty() {
                         if CANCEL_PLAYBACK.load(Ordering::SeqCst) {
                             sink.stop();
                             break;
                         }
-                        std::thread::sleep(std::time::Duration::from_millis(50));
+                        std::thread::sleep(std::time::Duration::from_millis(25));
+                    }
+                    if let Ok(mut guard) = ACTIVE_SINK.lock() {
+                        *guard = None;
                     }
                 }
             }

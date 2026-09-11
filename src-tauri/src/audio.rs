@@ -7,7 +7,7 @@ pub mod tts;
 pub mod service;
 
 pub use service::SpeechService;
-pub use playback::{stop_audio, play_listening_chime, play_processing_chime, play_audio_file};
+pub use playback::{stop_audio, reset_cancellation, play_listening_chime, play_processing_chime, play_audio_file};
 pub use capture::{start_recording, start_wake_word_detector};
 pub use resampler::{resample, save_wav};
 

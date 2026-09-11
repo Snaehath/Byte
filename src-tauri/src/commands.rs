@@ -7,7 +7,7 @@ use crate::ai::{Capability, ModelManager};
 use crate::ai::llm::{ChatMessage, LlmResult};
 use crate::tools;
 use crate::prompts;
-use crate::core::{AssistantResponse, resolve_conversation_intent};
+use crate::core::{AssistantResponse, resolve_conversation_intent, InteractionContext};
 use crate::diagnostics::{PipelineTelemetry, StageTimer};
 use crate::platform::get_active_window_title;
 use crate::config::paths::BytePaths;
@@ -22,9 +22,19 @@ pub struct ProcessResult {
 
 #[tauri::command]
 pub fn stop_action(state: State<'_, AppState>) -> Result<(), String> {
+    // 1. Cancel and take the active interaction context if present (idempotent)
+    if let Ok(mut active) = state.active_interaction.lock() {
+        if let Some(ctx) = active.take() {
+            log::info!("Cancelling active interaction: {}", ctx.id);
+            ctx.cancel();
+        }
+    }
+
+    // 2. Immediately stop audio hardware capture & flush Rodio audio sink
     audio::stop_audio();
     state.is_recording.store(false, Ordering::SeqCst);
     state.is_interacting.store(false, Ordering::SeqCst);
+
     Ok(())
 }
 
@@ -33,9 +43,38 @@ pub async fn get_system_health(state: State<'_, AppState>) -> Result<crate::diag
     Ok(crate::diagnostics::HealthChecker::check_system(&state.http_client).await)
 }
 
+/// Check whether an interaction context is still the currently active one and has not been cancelled
+fn is_interaction_valid(ctx: &InteractionContext, state: &AppState) -> bool {
+    if ctx.is_cancelled() {
+        return false;
+    }
+    if let Ok(guard) = state.active_interaction.lock() {
+        if let Some(active) = guard.as_ref() {
+            return active.id == ctx.id && !active.is_cancelled();
+        }
+    }
+    false
+}
+
 /// Active conversation lifecycle loop (Listen -> Auto-stop on silence -> Transcribe -> Query -> Play TTS)
 #[tauri::command]
 pub async fn start_interaction(state: State<'_, AppState>, window: tauri::WebviewWindow) -> Result<ProcessResult, String> {
+    // Pre-empt any previous interaction if one was still in flight
+    if let Ok(mut active) = state.active_interaction.lock() {
+        if let Some(prev) = active.take() {
+            log::info!("Pre-empting previous active interaction: {}", prev.id);
+            prev.cancel();
+        }
+    }
+    audio::stop_audio();
+    audio::reset_cancellation();
+
+    // Create a fresh, dedicated InteractionContext for this turn
+    let context = InteractionContext::new();
+    if let Ok(mut active) = state.active_interaction.lock() {
+        *active = Some(context.clone());
+    }
+
     let pipeline_start = StageTimer::start();
     let mut telemetry = PipelineTelemetry::new();
 
@@ -47,9 +86,29 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
 
     // 2. Wait while recording is active (silence detector or manual click sets is_recording = false)
     while state.is_recording.load(Ordering::SeqCst) {
+        if context.is_cancelled() {
+            log::info!("Interaction {} cancelled during audio recording.", context.id);
+            state.is_interacting.store(false, Ordering::SeqCst);
+            return Ok(ProcessResult {
+                transcription: String::new(),
+                thinking: String::new(),
+                response: "Cancelled.".to_string(),
+                auto_listen: false,
+            });
+        }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
     telemetry.vad_capture_ms = capture_timer.elapsed_ms();
+
+    if context.is_cancelled() {
+        state.is_interacting.store(false, Ordering::SeqCst);
+        return Ok(ProcessResult {
+            transcription: String::new(),
+            thinking: String::new(),
+            response: "Cancelled.".to_string(),
+            auto_listen: false,
+        });
+    }
 
     // 3. Emit processing state: recording done, now thinking
     let _ = window.emit("processing", ());
@@ -81,10 +140,22 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
     log::info!("Whisper transcription finished in {}ms: '{}'", telemetry.stt_ms, transcription);
     let _ = std::fs::remove_file(&temp_wav);
 
+    if context.is_cancelled() {
+        log::info!("Interaction {} cancelled after STT transcription.", context.id);
+        state.is_interacting.store(false, Ordering::SeqCst);
+        return Ok(ProcessResult {
+            transcription,
+            thinking: String::new(),
+            response: "Cancelled.".to_string(),
+            auto_listen: false,
+        });
+    }
+
     // Check if user is asking to stop/cancel
     let clean_lower = transcription.trim().to_lowercase();
     if clean_lower == "stop" || clean_lower == "cancel" || clean_lower.contains("stop speaking") || clean_lower.contains("shut up") || clean_lower.contains("be quiet") {
-        log::info!("Stop/Cancel command recognized: '{}'", clean_lower);
+        log::info!("Stop/Cancel voice command recognized: '{}'", clean_lower);
+        context.cancel();
         audio::stop_audio();
         state.is_interacting.store(false, Ordering::SeqCst);
         return Ok(ProcessResult {
@@ -213,82 +284,123 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
         let llm_timer = StageTimer::start();
         log::info!("Interaction: Querying local model manager with native tools...");
 
-        let llm_result = match model_manager.execute(
-            Capability::ToolCalling,
-            &state.http_client,
-            &messages,
-            Some(&tools_schema),
-        ).await {
-            Ok(res) => res,
-            Err(err_msg) => {
-                log::error!("Interaction model error: {}", err_msg);
-                final_response = "I'm having trouble reaching my local AI provider. Please make sure Ollama is running.".to_string();
-                has_error = true;
-                LlmResult {
-                    content: String::new(),
-                    tool_call: None,
-                }
-            }
-        };
-        telemetry.llm_ms = llm_timer.elapsed_ms();
+    let cancel_llm = context.cancellation.cancelled();
+    let llm_fut = model_manager.execute(
+        Capability::ToolCalling,
+        &state.http_client,
+        &messages,
+        Some(&tools_schema),
+    );
 
-        if !has_error {
-            log::info!(
-                "Model responded in {}ms: content='{}', tool_call={:?}",
-                telemetry.llm_ms,
-                llm_result.content,
-                llm_result.tool_call
-            );
-
-            let (thinking, clean_content) = tools::extract_think(&llm_result.content);
-            final_thinking = thinking;
-
-            if let Some(tool_call) = llm_result.tool_call {
-                is_tool = true;
-                log::info!("Tool call parsed: {:?}", tool_call);
-
-                let mut requires_conf = false;
-                let mut display_name = tool_call.tool.clone();
-                if let Some(tool) = registry.get_tool(&tool_call.tool) {
-                    requires_conf = tool.requires_confirmation();
-                    display_name = tool.name().to_string();
-                }
-
-                if requires_conf {
-                    log::info!("Tool {} requires user confirmation.", display_name);
-                    {
-                        let mut pending = state.pending_tool_call.lock().unwrap();
-                        *pending = Some(tool_call.clone());
+    let llm_result = tokio::select! {
+        res = llm_fut => {
+            match res {
+                Ok(r) => r,
+                Err(err_msg) => {
+                    log::error!("Interaction model error: {}", err_msg);
+                    final_response = "I'm having trouble reaching my local AI provider. Please make sure Ollama is running.".to_string();
+                    has_error = true;
+                    LlmResult {
+                        content: String::new(),
+                        tool_call: None,
                     }
-                    {
-                        let mut pending_t = state.pending_tool_transcription.lock().unwrap();
-                        *pending_t = Some(transcription.clone());
-                    }
-                    final_response = format!("I need your confirmation to execute '{}'. Would you like me to proceed?", display_name);
-                } else {
-                    executed_tool_name = Some(display_name);
-                    let tool_exec_timer = StageTimer::start();
-                    match registry.execute_tool(&tool_call, &window, &state.http_client, &transcription, &state).await {
-                        Ok(tool_output) => {
-                            log::info!("Tool success: {}", tool_output);
-                            final_response = tool_output;
-                        }
-                        Err(e) => {
-                            log::error!("Tool error: {}", e);
-                            final_response = format!("I encountered an issue: {}", e);
-                            has_error = true;
-                        }
-                    }
-                    telemetry.tool_ms = tool_exec_timer.elapsed_ms();
                 }
-            } else {
-                final_response = clean_content;
             }
         }
+        _ = cancel_llm => {
+            log::info!("Interaction {} cancelled during LLM generation.", context.id);
+            state.is_interacting.store(false, Ordering::SeqCst);
+            return Ok(ProcessResult {
+                transcription,
+                thinking: String::new(),
+                response: "Cancelled.".to_string(),
+                auto_listen: false,
+            });
+        }
+    };
+    telemetry.llm_ms = llm_timer.elapsed_ms();
+
+    // Verify interaction is still active before processing results or calling tools
+    if !is_interaction_valid(&context, &state) {
+        log::info!("Interaction {} superseded or cancelled before tool/response handling.", context.id);
+        state.is_interacting.store(false, Ordering::SeqCst);
+        return Ok(ProcessResult {
+            transcription,
+            thinking: String::new(),
+            response: "Cancelled.".to_string(),
+            auto_listen: false,
+        });
+    }
+
+    if !has_error {
+        log::info!(
+            "Model responded in {}ms: content='{}', tool_call={:?}",
+            telemetry.llm_ms,
+            llm_result.content,
+            llm_result.tool_call
+        );
+
+        let (thinking, clean_content) = tools::extract_think(&llm_result.content);
+        final_thinking = thinking;
+
+        if let Some(tool_call) = llm_result.tool_call {
+            is_tool = true;
+            log::info!("Tool call parsed: {:?}", tool_call);
+
+            let mut requires_conf = false;
+            let mut display_name = tool_call.tool.clone();
+            if let Some(tool) = registry.get_tool(&tool_call.tool) {
+                requires_conf = tool.requires_confirmation();
+                display_name = tool.name().to_string();
+            }
+
+            if requires_conf {
+                log::info!("Tool {} requires user confirmation.", display_name);
+                {
+                    let mut pending = state.pending_tool_call.lock().unwrap();
+                    *pending = Some(tool_call.clone());
+                }
+                {
+                    let mut pending_t = state.pending_tool_transcription.lock().unwrap();
+                    *pending_t = Some(transcription.clone());
+                }
+                final_response = format!("I need your confirmation to execute '{}'. Would you like me to proceed?", display_name);
+            } else {
+                executed_tool_name = Some(display_name);
+                let tool_exec_timer = StageTimer::start();
+                match registry.execute_tool(&tool_call, &window, &state.http_client, &transcription, &state).await {
+                    Ok(tool_output) => {
+                        log::info!("Tool success: {}", tool_output);
+                        final_response = tool_output;
+                    }
+                    Err(e) => {
+                        log::error!("Tool error: {}", e);
+                        final_response = format!("I encountered an issue: {}", e);
+                        has_error = true;
+                    }
+                }
+                telemetry.tool_ms = tool_exec_timer.elapsed_ms();
+            }
+        } else {
+            final_response = clean_content;
+        }
+    }
     }
 
     if final_response.is_empty() {
         final_response = "I'm not sure how to help with that.".to_string();
+    }
+
+    // Verify interaction is still active before emitting UI mood or preparing audio
+    if !is_interaction_valid(&context, &state) {
+        log::info!("Interaction {} superseded or cancelled before audio synthesis.", context.id);
+        state.is_interacting.store(false, Ordering::SeqCst);
+        return Ok(ProcessResult {
+            transcription,
+            thinking: final_thinking,
+            response: final_response,
+            auto_listen: false,
+        });
     }
 
     // 6. Build structured assistant response and derive UI mood state cleanly
@@ -316,21 +428,23 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
         response_text.to_lowercase().contains("bye") || response_text.to_lowercase().contains("farewell")
     );
 
-    // Record turn in persistent memory
-    if let Ok(mut mem) = state.memory.lock() {
-        mem.recent_conversation.push(crate::memory::ConversationTurn {
-            role: "user".to_string(),
-            message: transcription.clone(),
-        });
-        mem.recent_conversation.push(crate::memory::ConversationTurn {
-            role: "assistant".to_string(),
-            message: response_text.clone(),
-        });
-        if mem.recent_conversation.len() > 10 {
-            let excess = mem.recent_conversation.len() - 10;
-            mem.recent_conversation.drain(0..excess);
+    // Record turn in persistent memory (only if interaction is still active and valid)
+    if is_interaction_valid(&context, &state) {
+        if let Ok(mut mem) = state.memory.lock() {
+            mem.recent_conversation.push(crate::memory::ConversationTurn {
+                role: "user".to_string(),
+                message: transcription.clone(),
+            });
+            mem.recent_conversation.push(crate::memory::ConversationTurn {
+                role: "assistant".to_string(),
+                message: response_text.clone(),
+            });
+            if mem.recent_conversation.len() > 10 {
+                let excess = mem.recent_conversation.len() - 10;
+                mem.recent_conversation.drain(0..excess);
+            }
+            let _ = mem.save();
         }
-        let _ = mem.save();
     }
 
     // 7. TTS synthesis and audio playback
@@ -338,22 +452,58 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
     let window_clone = window.clone();
     let mood_clone = mood.clone();
 
-    // Step A: Audio Synthesis (WAV generation)
+    // Step A: Audio Synthesis (WAV generation) wrapped in tokio::select! for cancellation
     let synth_timer = StageTimer::start();
     let speech = SpeechService::default();
     let synth_text = text_to_speak.clone();
-    let wav_path_res = tokio::task::spawn_blocking(move || {
+    let cancel_synth = context.cancellation.cancelled();
+    let synth_task = tokio::task::spawn_blocking(move || {
         speech.synthesize(&synth_text, 1.0)
-    }).await.map_err(|e| format!("TTS task spawn failed: {}", e))?;
+    });
+
+    let wav_path_res = tokio::select! {
+        res = synth_task => {
+            match res {
+                Ok(r) => r,
+                Err(e) => Err(format!("TTS task join error: {}", e)),
+            }
+        }
+        _ = cancel_synth => {
+            log::info!("Interaction {} cancelled during TTS synthesis.", context.id);
+            state.is_interacting.store(false, Ordering::SeqCst);
+            return Ok(ProcessResult {
+                transcription,
+                thinking: assistant_resp.thinking,
+                response: response_text,
+                auto_listen: false,
+            });
+        }
+    };
 
     telemetry.tts_synthesis_ms = synth_timer.elapsed_ms();
     // TTFA: Exact turnaround time from silence detection until audio starts playing
     telemetry.ttfa_ms = telemetry.stt_ms + telemetry.llm_ms + telemetry.tool_ms + telemetry.tts_synthesis_ms;
 
-    // Step B: Audio Playback
+    // Check interaction validity before audio playback
+    if !is_interaction_valid(&context, &state) {
+        log::info!("Interaction {} superseded or cancelled before audio playback.", context.id);
+        if let Ok(wav_path) = wav_path_res {
+            let _ = std::fs::remove_file(wav_path);
+        }
+        state.is_interacting.store(false, Ordering::SeqCst);
+        return Ok(ProcessResult {
+            transcription,
+            thinking: assistant_resp.thinking,
+            response: response_text,
+            auto_listen: false,
+        });
+    }
+
+    // Step B: Audio Playback wrapped in tokio::select! for cancellation
     let playback_timer = StageTimer::start();
     if let Ok(wav_path) = wav_path_res {
-        let _ = tokio::task::spawn_blocking(move || {
+        let cancel_play = context.cancellation.cancelled();
+        let play_task = tokio::task::spawn_blocking(move || {
             let _ = window_clone.emit("speaking", &mood_clone);
             let speech = SpeechService::default();
             speech.play(&wav_path);
@@ -363,10 +513,27 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
             if is_farewell {
                 let _ = window_clone.hide();
             }
-        }).await;
+        });
+
+        tokio::select! {
+            _ = play_task => {}
+            _ = cancel_play => {
+                log::info!("Interaction {} cancelled during audio playback.", context.id);
+                audio::stop_audio();
+            }
+        }
     }
     telemetry.playback_ms = playback_timer.elapsed_ms();
     telemetry.total_pipeline_ms = pipeline_start.elapsed_ms();
+
+    // Clear active_interaction if this interaction is still the active one
+    if let Ok(mut active) = state.active_interaction.lock() {
+        if let Some(current) = active.as_ref() {
+            if current.id == context.id {
+                active.take();
+            }
+        }
+    }
 
     state.is_interacting.store(false, Ordering::SeqCst);
 
