@@ -8,6 +8,23 @@ impl DesktopTool for ClipboardAccessTool {
     fn name(&self) -> &str { "clipboard_access" }
     fn description(&self) -> &str { "Read the current text from the system clipboard or copy new text to it." }
     fn parameter_schema(&self) -> &str { "{\"action\": \"read\" | \"write\", \"text\": \"text to copy (optional)\"}" }
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["read", "write"],
+                    "description": "Whether to read current clipboard or write new text"
+                },
+                "text": {
+                    "type": "string",
+                    "description": "Text to write to clipboard (required if action is write)"
+                }
+            },
+            "required": ["action"]
+        })
+    }
 
     fn execute<'a>(
         &self,

@@ -1,5 +1,5 @@
 use crate::ai::provider::Capability;
-use crate::ai::llm::OllamaProvider;
+use crate::ai::llm::{ChatMessage, LlmResult, OllamaProvider};
 use crate::config::AppConfig;
 
 pub struct ModelManager {
@@ -19,13 +19,14 @@ impl ModelManager {
         Self { config }
     }
 
-    /// Primary execution router for local Ollama
+    /// Primary execution router for local Ollama with native tool calling support
     pub async fn execute(
         &self,
         capability: Capability,
         client: &reqwest::Client,
-        prompt: &str,
-    ) -> Result<String, String> {
+        messages: &[ChatMessage],
+        tools: Option<&[serde_json::Value]>,
+    ) -> Result<LlmResult, String> {
         match capability {
             Capability::TextGeneration | Capability::ToolCalling => {
                 log::info!(
@@ -40,7 +41,7 @@ impl ModelManager {
                     self.config.llm.reasoning_effort.clone(),
                     self.config.llm.temperature,
                 );
-                provider.ask(client, prompt).await
+                provider.ask(client, messages, tools).await
             }
             Capability::Vision => {
                 log::info!("ModelManager: Vision capability requested locally.");

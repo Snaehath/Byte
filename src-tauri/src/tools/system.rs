@@ -8,6 +8,23 @@ impl DesktopTool for SystemControlTool {
     fn name(&self) -> &str { "system_control" }
     fn description(&self) -> &str { "Adjust system volume, brightness, or media playback tracks." }
     fn parameter_schema(&self) -> &str { "{\"action\": \"volume_up\" | \"volume_down\" | \"mute\" | \"set_brightness\" | \"play_pause\" | \"next_track\" | \"previous_track\", \"value\": 0-100}" }
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["volume_up", "volume_down", "mute", "set_brightness", "play_pause", "next_track", "previous_track"],
+                    "description": "System control action to perform"
+                },
+                "value": {
+                    "type": "integer",
+                    "description": "Optional numeric value from 0 to 100 (for brightness)"
+                }
+            },
+            "required": ["action"]
+        })
+    }
 
     fn execute<'a>(
         &self,

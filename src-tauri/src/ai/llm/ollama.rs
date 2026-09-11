@@ -1,4 +1,4 @@
-use crate::ai::llm::client::{ChatMessage, OpenAiClient};
+use crate::ai::llm::client::{ChatMessage, LlmResult, OpenAiClient};
 
 pub struct OllamaProvider {
     pub endpoint_url: String,
@@ -23,18 +23,19 @@ impl OllamaProvider {
         Self { endpoint_url, model, reasoning_effort, temperature }
     }
 
-    pub async fn ask(&self, client: &reqwest::Client, prompt: &str) -> Result<String, String> {
-        let messages = vec![ChatMessage {
-            role: "user".to_string(),
-            content: prompt.to_string(),
-        }];
-
+    pub async fn ask(
+        &self,
+        client: &reqwest::Client,
+        messages: &[ChatMessage],
+        tools: Option<&[serde_json::Value]>,
+    ) -> Result<LlmResult, String> {
         OpenAiClient::chat_completion(
             client,
             &self.endpoint_url,
             "",
             &self.model,
-            &messages,
+            messages,
+            tools,
             self.temperature,
             &self.reasoning_effort,
         ).await

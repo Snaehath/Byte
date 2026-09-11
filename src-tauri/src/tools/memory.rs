@@ -8,6 +8,34 @@ impl DesktopTool for UpdateMemoryTool {
     fn description(&self) -> &str { "Update user name, preferences, or habits in persistent memory." }
     fn parameter_schema(&self) -> &str { "{\"name\": \"new name\", \"key\": \"preference key\", \"value\": \"preference value\", \"add_habit\": \"habit to add\", \"remove_habit\": \"habit to remove\"}" }
 
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "User's preferred name"
+                },
+                "key": {
+                    "type": "string",
+                    "description": "Preference key name (e.g. favorite_language, theme)"
+                },
+                "value": {
+                    "type": "string",
+                    "description": "Preference value"
+                },
+                "add_habit": {
+                    "type": "string",
+                    "description": "Habit to add to user habits list"
+                },
+                "remove_habit": {
+                    "type": "string",
+                    "description": "Habit to remove from user habits list"
+                }
+            }
+        })
+    }
+
     fn execute<'a>(
         &self,
         params: &'a HashMap<String, serde_json::Value>,

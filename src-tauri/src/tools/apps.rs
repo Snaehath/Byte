@@ -8,6 +8,22 @@ impl DesktopTool for OpenApplicationTool {
     fn name(&self) -> &str { "open_application" }
     fn description(&self) -> &str { "Open a desktop application by name (e.g. notepad, chrome, explorer, code, terminal, etc.)." }
     fn parameter_schema(&self) -> &str { "{\"name\": \"app_name\", \"args\": \"optional command arguments\"}" }
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Desktop application name (e.g. notepad, chrome, explorer, code, terminal)"
+                },
+                "args": {
+                    "type": "string",
+                    "description": "Optional command arguments"
+                }
+            },
+            "required": ["name"]
+        })
+    }
 
     fn execute<'a>(
         &self,

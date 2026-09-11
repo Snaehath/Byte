@@ -8,6 +8,18 @@ impl DesktopTool for OpenFolderTool {
     fn name(&self) -> &str { "open_folder" }
     fn description(&self) -> &str { "Open a local directory or folder in File Explorer." }
     fn parameter_schema(&self) -> &str { "{\"path\": \"C:\\\\...\"}" }
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Folder path or shortcut name (e.g. downloads, documents, desktop, or full path)"
+                }
+            },
+            "required": ["path"]
+        })
+    }
 
     fn execute<'a>(
         &self,

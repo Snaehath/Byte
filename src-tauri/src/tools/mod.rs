@@ -61,7 +61,15 @@ pub type ToolFuture<'a> = Pin<Box<dyn Future<Output = Result<String, String>> + 
 pub trait DesktopTool: Send + Sync {
     fn name(&self) -> &str;
     fn description(&self) -> &str;
-    fn parameter_schema(&self) -> &str;
+    fn parameter_schema(&self) -> &str {
+        "{}"
+    }
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {}
+        })
+    }
     fn requires_confirmation(&self) -> bool {
         false
     }
@@ -96,6 +104,25 @@ impl ToolRegistry {
         tools.insert("update_memory", Box::new(memory::UpdateMemoryTool));
         tools.insert("analyze_screen", Box::new(vision::AnalyzeScreenTool));
         Self { tools }
+    }
+
+    pub fn get_openai_tools(&self) -> Vec<serde_json::Value> {
+        let mut tools = Vec::new();
+        let mut sorted_keys: Vec<&&str> = self.tools.keys().collect();
+        sorted_keys.sort();
+        for key in sorted_keys {
+            if let Some(tool) = self.tools.get(*key) {
+                tools.push(serde_json::json!({
+                    "type": "function",
+                    "function": {
+                        "name": tool.name(),
+                        "description": tool.description(),
+                        "parameters": tool.parameters_schema()
+                    }
+                }));
+            }
+        }
+        tools
     }
 
     pub fn get_instructions_prompt(&self) -> String {

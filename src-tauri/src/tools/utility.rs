@@ -8,6 +8,22 @@ impl DesktopTool for SetTimerTool {
     fn name(&self) -> &str { "set_timer" }
     fn description(&self) -> &str { "Set a reminder or timer for a specified duration in seconds." }
     fn parameter_schema(&self) -> &str { "{\"duration_seconds\": number, \"label\": \"reminder label\"}" }
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "duration_seconds": {
+                    "type": "integer",
+                    "description": "Timer duration in seconds"
+                },
+                "label": {
+                    "type": "string",
+                    "description": "Reminder description or label"
+                }
+            },
+            "required": ["duration_seconds"]
+        })
+    }
 
     fn execute<'a>(
         &self,

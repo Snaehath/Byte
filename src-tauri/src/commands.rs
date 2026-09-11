@@ -4,6 +4,7 @@ use serde::Serialize;
 use crate::AppState;
 use crate::audio::{self, SpeechService};
 use crate::ai::{Capability, ModelManager};
+use crate::ai::llm::{ChatMessage, LlmResult};
 use crate::tools;
 use crate::prompts;
 use crate::core::AssistantResponse;
@@ -103,9 +104,7 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
         });
     }
 
-    // 5. Query Model Manager
-    let mut current_turn_prompt = transcription.clone();
-    let mut loop_count = 0;
+    // 5. Process input with Model Manager
     let mut final_response = String::new();
     let mut final_thinking = String::new();
     let mut auto_listen = false;
@@ -138,15 +137,9 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
                     format!("I failed to perform that action: {}", e)
                 }
             };
-
-            let orig_transcription = {
-                let mut pt = state.pending_tool_transcription.lock().unwrap();
-                pt.take().unwrap_or_else(|| transcription.clone())
-            };
-
-            current_turn_prompt = orig_transcription;
-            let tool_json = serde_json::to_string(&pending_call).unwrap_or_default();
-            current_turn_prompt.push_str(&format!("\nAssistant: {}\nSystem: [TOOL OUTPUT: {}]\n", tool_json, execute_result));
+            let _ = state.pending_tool_transcription.lock().unwrap().take();
+            final_response = execute_result;
+            is_tool = true;
         } else if is_cancelled {
             log::info!("User cancelled pending tool execution.");
             let _ = state.pending_tool_transcription.lock().unwrap().take();
@@ -159,77 +152,87 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
 
     if final_response.is_empty() {
         let registry = tools::ToolRegistry::new();
-        let registered_tools = registry.get_instructions_prompt();
+        let tools_schema = registry.get_openai_tools();
         let model_manager = ModelManager::default();
 
-        while loop_count < 3 {
-            if !state.is_interacting.load(Ordering::SeqCst) {
-                log::info!("Interaction loop cancelled by user/stop command.");
-                break;
+        let current_time_str = chrono::Local::now().format("%A, %B %d, %Y %I:%M %p").to_string();
+        let profile_context = {
+            if let Ok(mem) = state.memory.lock() {
+                let pref_str = mem.user_profile.preferences.iter()
+                    .map(|(k, v)| format!("- {}: {}", k, v))
+                    .collect::<Vec<String>>()
+                    .join("\n");
+                let habits_str = mem.user_profile.habits.join(", ");
+                format!(
+                    "User Profile:\nName: {}\nPreferences:\n{}\nHabits: {}\n\n",
+                    mem.user_profile.name, pref_str, habits_str
+                )
+            } else {
+                String::new()
             }
-            loop_count += 1;
+        };
 
-            let current_time_str = chrono::Local::now().format("%A, %B %d, %Y %I:%M %p").to_string();
-            let profile_context = {
-                if let Ok(mem) = state.memory.lock() {
-                    let pref_str = mem.user_profile.preferences.iter()
-                        .map(|(k, v)| format!("- {}: {}", k, v))
-                        .collect::<Vec<String>>()
-                        .join("\n");
-                    let habits_str = mem.user_profile.habits.join(", ");
-                    format!(
-                        "User Profile:\nName: {}\nPreferences:\n{}\nHabits: {}\n\n",
-                        mem.user_profile.name, pref_str, habits_str
-                    )
-                } else {
-                    String::new()
-                }
-            };
+        let active_window = get_active_window_title();
+        let system_instructions = format!(
+            "{}\n\nActive Window: {}\n\n{}",
+            prompts::get_system_instructions(&current_time_str),
+            active_window,
+            profile_context
+        );
 
-            let history_str = {
-                if let Ok(mem) = state.memory.lock() {
-                    if mem.recent_conversation.is_empty() {
-                        String::new()
-                    } else {
-                        let mut h_str = "# RECENT CONVERSATION HISTORY\n".to_string();
-                        for turn in &mem.recent_conversation {
-                            h_str.push_str(&format!("{}: {}\n", turn.role, turn.message));
-                        }
-                        h_str.push_str("\n");
-                        h_str
-                    }
-                } else {
-                    String::new()
-                }
-            };
+        let mut messages: Vec<ChatMessage> = Vec::new();
+        messages.push(ChatMessage {
+            role: "system".to_string(),
+            content: system_instructions,
+        });
 
-            let active_window = get_active_window_title();
-            let window_context = format!("Active Window: {}\n\n", active_window);
-            let system_instructions = prompts::get_system_instructions(&registered_tools, &current_time_str);
-            let formatted_prompt = format!("{}{}{}{}User: {}\nAssistant:", system_instructions, window_context, profile_context, history_str, current_turn_prompt);
-
-            let model_start = std::time::Instant::now();
-            log::info!("Interaction step {}: Querying model manager...", loop_count);
-
-            let raw_response = match model_manager.execute(Capability::ToolCalling, &state.http_client, &formatted_prompt).await {
-                Ok(resp) => resp,
-                Err(err_msg) => {
-                    log::error!("Interaction loop model error: {}", err_msg);
-                    final_response = "I'm having trouble reaching my AI provider. Please make sure Ollama is running or verify your cloud key.".to_string();
-                    has_error = true;
-                    break;
-                }
-            };
-            log::info!("Model responded in {}ms: '{}'", model_start.elapsed().as_millis(), raw_response);
-
-            if !state.is_interacting.load(Ordering::SeqCst) {
-                break;
+        if let Ok(mem) = state.memory.lock() {
+            for turn in &mem.recent_conversation {
+                messages.push(ChatMessage {
+                    role: turn.role.clone(),
+                    content: turn.message.clone(),
+                });
             }
+        }
 
-            let (thinking, response) = tools::extract_think(&raw_response);
+        messages.push(ChatMessage {
+            role: "user".to_string(),
+            content: transcription.clone(),
+        });
+
+        let model_start = std::time::Instant::now();
+        log::info!("Interaction: Querying local model manager with native tools...");
+
+        let llm_result = match model_manager.execute(
+            Capability::ToolCalling,
+            &state.http_client,
+            &messages,
+            Some(&tools_schema),
+        ).await {
+            Ok(res) => res,
+            Err(err_msg) => {
+                log::error!("Interaction model error: {}", err_msg);
+                final_response = "I'm having trouble reaching my local AI provider. Please make sure Ollama is running.".to_string();
+                has_error = true;
+                LlmResult {
+                    content: String::new(),
+                    tool_call: None,
+                }
+            }
+        };
+
+        if !has_error {
+            log::info!(
+                "Model responded in {}ms: content='{}', tool_call={:?}",
+                model_start.elapsed().as_millis(),
+                llm_result.content,
+                llm_result.tool_call
+            );
+
+            let (thinking, clean_content) = tools::extract_think(&llm_result.content);
             final_thinking = thinking;
 
-            if let Some(tool_call) = tools::parse_tool_call(&response) {
+            if let Some(tool_call) = llm_result.tool_call {
                 is_tool = true;
                 log::info!("Tool call parsed: {:?}", tool_call);
 
@@ -251,28 +254,27 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
                         *pending_t = Some(transcription.clone());
                     }
                     final_response = format!("I need your confirmation to execute '{}'. Would you like me to proceed?", display_name);
-                    break;
-                }
-
-                match registry.execute_tool(&tool_call, &window, &state.http_client, &transcription, &state).await {
-                    Ok(tool_output) => {
-                        log::info!("Tool success: {}", tool_output);
-                        current_turn_prompt.push_str(&format!("\nAssistant: {}\nSystem: [TOOL OUTPUT: {}]\n", response, tool_output));
-                    }
-                    Err(e) => {
-                        log::error!("Tool error: {}", e);
-                        current_turn_prompt.push_str(&format!("\nAssistant: {}\nSystem: [TOOL ERROR: {}]\n", response, e));
+                } else {
+                    match registry.execute_tool(&tool_call, &window, &state.http_client, &transcription, &state).await {
+                        Ok(tool_output) => {
+                            log::info!("Tool success: {}", tool_output);
+                            final_response = tool_output;
+                        }
+                        Err(e) => {
+                            log::error!("Tool error: {}", e);
+                            final_response = format!("I encountered an issue: {}", e);
+                            has_error = true;
+                        }
                     }
                 }
             } else {
-                final_response = response;
-                break;
+                final_response = clean_content;
             }
         }
     }
 
     if final_response.is_empty() {
-        final_response = "I couldn't resolve the task within my planning steps.".to_string();
+        final_response = "I'm not sure how to help with that.".to_string();
     }
 
     // 6. Build structured assistant response and derive UI mood state cleanly
@@ -284,14 +286,51 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
         *m = mood.clone();
     }
 
+    let trans_lower = transcription.to_lowercase();
     let response_lower = response_text.to_lowercase();
+
+    // Check if user is dismissing/closing the interaction
+    let is_user_dismissal = trans_lower.contains("thank")
+        || trans_lower.contains("nothing")
+        || trans_lower.contains("that's all")
+        || trans_lower.contains("that is all")
+        || trans_lower.contains("that's it")
+        || trans_lower.contains("that is it")
+        || trans_lower.contains("nevermind")
+        || trans_lower.contains("never mind")
+        || trans_lower.contains("i'm good")
+        || trans_lower.contains("im good")
+        || trans_lower.contains("no need")
+        || trans_lower == "ok"
+        || trans_lower == "okay"
+        || trans_lower == "alright"
+        || trans_lower == "got it"
+        || trans_lower == "cool";
+
     let is_farewell = response_lower.contains("goodbye")
         || response_lower.contains("bye")
-        || response_lower.contains("see you later")
-        || response_lower.contains("farewell");
+        || response_lower.contains("see you")
+        || response_lower.contains("farewell")
+        || response_lower.contains("have a great day")
+        || response_lower.contains("have a nice day")
+        || response_lower.contains("have a good day")
+        || response_lower.contains("take care")
+        || response_lower.contains("happy coding")
+        || response_lower.contains("you're welcome")
+        || response_lower.contains("you are welcome")
+        || response_lower.contains("anytime")
+        || response_lower.contains("my pleasure")
+        || response_lower.contains("no problem");
 
-    if (state.pending_tool_call.lock().unwrap().is_some() || !is_tool) && !is_farewell && !has_error {
-        auto_listen = true;
+    let has_pending = state.pending_tool_call.lock().unwrap().is_some();
+    let assistant_asked_question = response_text.trim().ends_with('?');
+
+    if !has_error && !is_user_dismissal && !is_farewell {
+        if has_pending {
+            auto_listen = true;
+        } else if !is_tool && assistant_asked_question {
+            auto_listen = true;
+        }
     }
 
     // Record turn in persistent memory

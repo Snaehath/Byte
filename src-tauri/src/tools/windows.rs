@@ -8,6 +8,19 @@ impl DesktopTool for WindowControlTool {
     fn name(&self) -> &str { "window_control" }
     fn description(&self) -> &str { "Minimize, maximize, or close the currently active window." }
     fn parameter_schema(&self) -> &str { "{\"action\": \"minimize\" | \"maximize\" | \"close\"}" }
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["minimize", "maximize", "close"],
+                    "description": "Action to perform on foreground active window"
+                }
+            },
+            "required": ["action"]
+        })
+    }
 
     fn execute<'a>(
         &self,

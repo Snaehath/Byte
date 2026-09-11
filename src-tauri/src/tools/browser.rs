@@ -8,6 +8,18 @@ impl DesktopTool for OpenUrlTool {
     fn name(&self) -> &str { "open_url" }
     fn description(&self) -> &str { "Open a specific URL in the default web browser." }
     fn parameter_schema(&self) -> &str { "{\"url\": \"https://...\"}" }
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "The URL to open in the browser"
+                }
+            },
+            "required": ["url"]
+        })
+    }
 
     fn execute<'a>(
         &self,
