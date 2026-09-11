@@ -1,8 +1,18 @@
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 
-const canvas = document.getElementById('byte-orb-canvas');
-const livingOrb = new window.ByteLivingOrb(canvas);
+let livingOrb = null;
+try {
+  const canvas = document.getElementById('byte-orb-canvas');
+  const OrbClass = window.ByteLivingOrb || (typeof ByteLivingOrb !== 'undefined' ? ByteLivingOrb : null);
+  if (OrbClass && canvas) {
+    livingOrb = new OrbClass(canvas);
+  } else {
+    console.error('ByteLivingOrb class not found!');
+  }
+} catch (err) {
+  console.error('Failed to initialize ByteLivingOrb:', err);
+}
 
 const statusText = document.getElementById('status-text');
 const statusBadge = document.querySelector('.status-badge');
@@ -66,9 +76,9 @@ async function runInteraction() {
     console.error('Interaction loop error:', err);
   } finally {
     isRunning = false;
-    livingOrb.setAudioLevel(0.0);
+    if (livingOrb) livingOrb.setAudioLevel(0.0);
     if (!result || !result.auto_listen) {
-      livingOrb.setState('idle');
+      if (livingOrb) livingOrb.setState('idle');
       updateStatusBadge('idle');
     }
   }
@@ -90,13 +100,13 @@ orbViewport.addEventListener('click', async () => {
 // Tauri Event Subscriptions
 listen('presence_state_changed', (event) => {
   const state = event.payload;
-  livingOrb.setState(state);
+  if (livingOrb) livingOrb.setState(state);
   updateStatusBadge(state);
 });
 
 listen('audio_level', (event) => {
   const level = typeof event.payload === 'number' ? event.payload : 0.0;
-  livingOrb.setAudioLevel(level);
+  if (livingOrb) livingOrb.setAudioLevel(level);
 });
 
 listen('wakeup', () => {
@@ -148,4 +158,4 @@ window.addEventListener('DOMContentLoaded', async () => {
 
 // Initial state setup
 updateStatusBadge('idle');
-livingOrb.setState('idle');
+if (livingOrb) livingOrb.setState('idle');

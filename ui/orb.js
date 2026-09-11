@@ -10,7 +10,7 @@
  * - Floating ambient embers with energy-based orbit and luminescence
  */
 
-export class ByteLivingOrb {
+class ByteLivingOrb {
   constructor(canvas) {
     if (!canvas) {
       console.error('ByteLivingOrb: canvas element is null or undefined!');
