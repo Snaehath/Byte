@@ -338,20 +338,35 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
     let window_clone = window.clone();
     let mood_clone = mood.clone();
 
-    let tts_timer = StageTimer::start();
-    let _ = tokio::task::spawn_blocking(move || {
-        let _ = window_clone.emit("speaking", &mood_clone);
-        let speech = SpeechService::default();
-        let _ = speech.speak(&text_to_speak, 1.0);
-        let _ = window_clone.emit("processing", ());
-        std::thread::sleep(std::time::Duration::from_millis(50));
-        let _ = window_clone.emit("speaking", "calm");
-        if is_farewell {
-            let _ = window_clone.hide();
-        }
-    }).await;
-    telemetry.tts_synth_ms = tts_timer.elapsed_ms();
-    telemetry.total_ms = pipeline_start.elapsed_ms();
+    // Step A: Audio Synthesis (WAV generation)
+    let synth_timer = StageTimer::start();
+    let speech = SpeechService::default();
+    let synth_text = text_to_speak.clone();
+    let wav_path_res = tokio::task::spawn_blocking(move || {
+        speech.synthesize(&synth_text, 1.0)
+    }).await.map_err(|e| format!("TTS task spawn failed: {}", e))?;
+
+    telemetry.tts_synthesis_ms = synth_timer.elapsed_ms();
+    // TTFA: Exact turnaround time from silence detection until audio starts playing
+    telemetry.ttfa_ms = telemetry.stt_ms + telemetry.llm_ms + telemetry.tool_ms + telemetry.tts_synthesis_ms;
+
+    // Step B: Audio Playback
+    let playback_timer = StageTimer::start();
+    if let Ok(wav_path) = wav_path_res {
+        let _ = tokio::task::spawn_blocking(move || {
+            let _ = window_clone.emit("speaking", &mood_clone);
+            let speech = SpeechService::default();
+            speech.play(&wav_path);
+            let _ = window_clone.emit("processing", ());
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            let _ = window_clone.emit("speaking", "calm");
+            if is_farewell {
+                let _ = window_clone.hide();
+            }
+        }).await;
+    }
+    telemetry.playback_ms = playback_timer.elapsed_ms();
+    telemetry.total_pipeline_ms = pipeline_start.elapsed_ms();
 
     state.is_interacting.store(false, Ordering::SeqCst);
 

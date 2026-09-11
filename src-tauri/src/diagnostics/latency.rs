@@ -7,8 +7,10 @@ pub struct PipelineTelemetry {
     pub stt_ms: u128,
     pub llm_ms: u128,
     pub tool_ms: u128,
-    pub tts_synth_ms: u128,
-    pub total_ms: u128,
+    pub tts_synthesis_ms: u128,
+    pub ttfa_ms: u128,
+    pub playback_ms: u128,
+    pub total_pipeline_ms: u128,
 }
 
 impl PipelineTelemetry {
@@ -33,8 +35,10 @@ impl PipelineTelemetry {
              │ ├─ STT (Whisper):       {:>6} ms                │\n\
              │ ├─ LLM Inference:       {:>6} ms                │\n\
              │ ├─ Tool Execution:      {:>6} ms                │\n\
-             │ ├─ TTS Synthesis:       {:>6} ms                │\n\
-             │ └─ Total Latency:       {:>6} ms                │\n\
+             │ ├─ TTS Synthesis (WAV): {:>6} ms                │\n\
+             │ ├─ ⚡ TTFA (First Audio):{:>5} ms  <-- HEADLINE   │\n\
+             │ ├─ Audio Playback:      {:>6} ms                │\n\
+             │ └─ Total Pipeline:      {:>6} ms                │\n\
              └──────────────────────────────────────────────────┘",
             truncate_str(user_text, 32),
             truncate_str(&tool_desc, 32),
@@ -42,8 +46,10 @@ impl PipelineTelemetry {
             self.stt_ms,
             self.llm_ms,
             self.tool_ms,
-            self.tts_synth_ms,
-            self.total_ms
+            self.tts_synthesis_ms,
+            self.ttfa_ms,
+            self.playback_ms,
+            self.total_pipeline_ms
         );
     }
 }

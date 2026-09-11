@@ -92,11 +92,27 @@ impl DesktopTool for SystemControlTool {
     }
 }
 
+#[derive(serde::Deserialize, Debug, Default)]
+struct RawSystemStats {
+    #[serde(default)]
+    cpu: Option<u64>,
+    #[serde(default)]
+    free: Option<u64>,
+    #[serde(default)]
+    total: Option<u64>,
+    #[serde(default)]
+    days: Option<u64>,
+    #[serde(default)]
+    hours: Option<u64>,
+    #[serde(default)]
+    minutes: Option<u64>,
+}
+
 pub struct GetSystemStatsTool;
 
 impl DesktopTool for GetSystemStatsTool {
     fn name(&self) -> &str { "get_system_stats" }
-    fn description(&self) -> &str { "Retrieve current system CPU utilization, RAM usage, and uptime." }
+    fn description(&self) -> &str { "Retrieve current system CPU utilization, RAM usage, and uptime in a single fast call." }
     fn parameter_schema(&self) -> &str { "{}" }
 
     fn execute<'a>(
@@ -108,45 +124,38 @@ impl DesktopTool for GetSystemStatsTool {
         _state: &'a tauri::State<'_, crate::AppState>,
     ) -> ToolFuture<'a> {
         Box::pin(async move {
-            let cpu_output = Command::new("powershell")
-                .args(&["-Command", "Get-CimInstance Win32_Processor | Select-Object -ExpandProperty LoadPercentage"])
-                .output();
-            let ram_output = Command::new("powershell")
-                .args(&["-Command", "Get-CimInstance Win32_OperatingSystem | Select-Object FreePhysicalMemory, TotalVisibleMemorySize | ConvertTo-Json"])
-                .output();
-            let uptime_output = Command::new("powershell")
-                .args(&["-Command", "$os = Get-CimInstance Win32_OperatingSystem; $uptime = (Get-Date) - $os.LastBootUpTime; \"$($uptime.Days) days, $($uptime.Hours) hours, $($uptime.Minutes) minutes\""])
-                .output();
+            let stats = tokio::task::spawn_blocking(move || {
+                let ps_script = r#"$cpu = (Get-CimInstance Win32_Processor).LoadPercentage; $os = Get-CimInstance Win32_OperatingSystem; $up = (Get-Date) - $os.LastBootUpTime; @{ cpu = $cpu; free = $os.FreePhysicalMemory; total = $os.TotalVisibleMemorySize; days = [int]$up.Days; hours = [int]$up.Hours; minutes = [int]$up.Minutes } | ConvertTo-Json -Compress"#;
+                let output = Command::new("powershell")
+                    .args(&["-NoProfile", "-NonInteractive", "-Command", ps_script])
+                    .output();
 
-            let cpu_percentage = if let Ok(out) = cpu_output {
-                String::from_utf8_lossy(&out.stdout).trim().to_string()
-            } else {
-                "unknown".to_string()
-            };
-
-            let mut ram_info = "unknown".to_string();
-            if let Ok(out) = ram_output {
-                let out_str = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&out_str) {
-                    let free = val.get("FreePhysicalMemory").and_then(|v| v.as_u64()).unwrap_or(0);
-                    let total = val.get("TotalVisibleMemorySize").and_then(|v| v.as_u64()).unwrap_or(0);
-                    if total > 0 {
-                        let used = total - free;
-                        let percent = (used as f64 / total as f64) * 100.0;
-                        ram_info = format!("{:.1}% ({:.1} GB used out of {:.1} GB)", percent, used as f64 / 1048576.0, total as f64 / 1048576.0);
+                match output {
+                    Ok(out) if out.status.success() => {
+                        let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                        serde_json::from_str::<RawSystemStats>(&stdout).unwrap_or_default()
                     }
+                    _ => RawSystemStats::default(),
                 }
-            }
+            }).await.map_err(|e| format!("System stats task failed: {}", e))?;
 
-            let uptime_info = if let Ok(out) = uptime_output {
-                String::from_utf8_lossy(&out.stdout).trim().to_string()
-            } else {
-                "unknown".to_string()
+            let cpu_pct = stats.cpu.map(|c| c.to_string()).unwrap_or_else(|| "unknown".to_string());
+            let ram_info = match (stats.free, stats.total) {
+                (Some(free), Some(total)) if total > 0 => {
+                    let used = total.saturating_sub(free);
+                    let percent = (used as f64 / total as f64) * 100.0;
+                    format!("{:.1}% ({:.1} GB used out of {:.1} GB)", percent, used as f64 / 1048576.0, total as f64 / 1048576.0)
+                }
+                _ => "unknown".to_string(),
+            };
+            let uptime_info = match (stats.days, stats.hours, stats.minutes) {
+                (Some(d), Some(h), Some(m)) => format!("{} days, {} hours, {} minutes", d, h, m),
+                _ => "unknown".to_string(),
             };
 
             Ok(format!(
                 "System stats: CPU at {}%, RAM at {}, and uptime is {}.",
-                cpu_percentage, ram_info, uptime_info
+                cpu_pct, ram_info, uptime_info
             ))
         })
     }

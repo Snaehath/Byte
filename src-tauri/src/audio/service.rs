@@ -28,17 +28,27 @@ impl SpeechService {
         self.stt.transcribe(wav_path)
     }
 
-    /// Synthesize speech from text and play it out loud (blocking until done)
-    pub fn speak(&self, text: &str, speed: f32) -> Result<(), String> {
+    /// Synthesize speech to a temporary WAV file without playing it
+    pub fn synthesize(&self, text: &str, speed: f32) -> Result<std::path::PathBuf, String> {
         let ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis();
         let output_wav = BytePaths::tts_output_dir().join(format!("speech_{}.wav", ts));
-
         self.tts.synthesize(text, &output_wav, speed)?;
-        play_audio_file(&output_wav);
-        let _ = std::fs::remove_file(&output_wav);
+        Ok(output_wav)
+    }
+
+    /// Play a synthesized WAV file and remove it afterwards
+    pub fn play(&self, wav_path: &Path) {
+        play_audio_file(wav_path);
+        let _ = std::fs::remove_file(wav_path);
+    }
+
+    /// Synthesize speech from text and play it out loud (blocking until done)
+    pub fn speak(&self, text: &str, speed: f32) -> Result<(), String> {
+        let output_wav = self.synthesize(text, speed)?;
+        self.play(&output_wav);
         Ok(())
     }
 }
