@@ -27,7 +27,6 @@ pub mod tools;
 pub mod platform;
 pub mod diagnostics;
 pub mod commands;
-pub mod gemini; // Deprecated backwards-compatibility layer
 
 // Re-exports for backwards-compatibility
 pub use memory::{ByteMemory, UserProfile, Reminder, ConversationTurn};

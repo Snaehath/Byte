@@ -16,6 +16,7 @@ impl OpenAiClient {
         model: &str,
         messages: &[ChatMessage],
         temperature: f32,
+        reasoning_effort: &str,
     ) -> Result<String, String> {
         let mut req = client
             .post(endpoint_url)
@@ -25,11 +26,18 @@ impl OpenAiClient {
             req = req.header("Authorization", format!("Bearer {}", api_key.trim()));
         }
 
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "model": model,
             "messages": messages,
             "temperature": temperature,
+            "options": {
+                "temperature": temperature
+            }
         });
+
+        if !reasoning_effort.is_empty() {
+            body["reasoning_effort"] = serde_json::Value::String(reasoning_effort.to_string());
+        }
 
         let res = req.json(&body).send().await
             .map_err(|e| format!("Network request failed to {}: {}", endpoint_url, e))?;

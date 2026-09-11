@@ -65,23 +65,18 @@ impl HealthChecker {
             details: format!("{}", piper_model_path.display()),
         };
 
-        // 4. Ollama / Cloud LLM
+        // 4. Local Ollama LLM
         let config = AppConfig::load();
         let mut ollama_ok = false;
         let mut ollama_msg = String::new();
         if let Ok(res) = client.get("http://localhost:11434").timeout(std::time::Duration::from_millis(1500)).send().await {
             if res.status().is_success() {
                 ollama_ok = true;
-                ollama_msg = "Ollama is running locally on port 11434".to_string();
+                ollama_msg = format!("Ollama running locally on port 11434 with model '{}' (thinking: {})", config.llm.ollama_model, config.llm.reasoning_effort);
             }
         }
         if !ollama_ok {
-            if !config.llm.cloud_api_key.is_empty() {
-                ollama_ok = true;
-                ollama_msg = "Cloud LLM API key configured as active provider".to_string();
-            } else {
-                ollama_msg = "Ollama is not responding on http://localhost:11434 and no cloud key is set".to_string();
-            }
+            ollama_msg = "Ollama is not responding on http://localhost:11434. Start Ollama with 'ollama serve'.".to_string();
         }
 
         let ollama_service = ComponentHealth {

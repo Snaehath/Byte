@@ -5,5 +5,5 @@ pub mod vision;
 
 pub use provider::Capability;
 pub use manager::ModelManager;
-pub use llm::{ChatMessage, OpenAiClient, OllamaProvider, OpenAiCompatibleProvider};
+pub use llm::{ChatMessage, OpenAiClient, OllamaProvider};
 pub use vision::VisionService;

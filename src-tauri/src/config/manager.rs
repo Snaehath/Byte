@@ -4,12 +4,9 @@ use crate::config::paths::BytePaths;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct LlmConfig {
-    pub provider: String,          // "ollama" | "openai_compatible"
     pub ollama_url: String,        // default "http://localhost:11434/v1/chat/completions"
-    pub ollama_model: String,      // default "qwen3-4b:latest"
-    pub cloud_url: String,         // OpenRouter or Nvidia URL
-    pub cloud_model: String,
-    pub cloud_api_key: String,
+    pub ollama_model: String,      // default "granite4.2:3b"
+    pub reasoning_effort: String,  // "low" for Granite fast answering
     pub temperature: f32,
     pub max_tokens: u32,
 }
@@ -17,13 +14,10 @@ pub struct LlmConfig {
 impl Default for LlmConfig {
     fn default() -> Self {
         Self {
-            provider: "ollama".to_string(),
             ollama_url: "http://localhost:11434/v1/chat/completions".to_string(),
-            ollama_model: "qwen3-4b:latest".to_string(),
-            cloud_url: "https://openrouter.ai/api/v1/chat/completions".to_string(),
-            cloud_model: "google/gemini-flash-1.5".to_string(),
-            cloud_api_key: String::new(),
-            temperature: 0.7,
+            ollama_model: "granite4.2:3b".to_string(),
+            reasoning_effort: "low".to_string(),
+            temperature: 0.2,
             max_tokens: 1024,
         }
     }
@@ -63,7 +57,11 @@ impl AppConfig {
         let path = Self::config_file_path();
         if path.exists() {
             if let Ok(content) = std::fs::read_to_string(&path) {
-                if let Ok(cfg) = serde_json::from_str::<AppConfig>(&content) {
+                if let Ok(mut cfg) = serde_json::from_str::<AppConfig>(&content) {
+                    if cfg.llm.ollama_model == "qwen3-4b:latest" || cfg.llm.ollama_model.is_empty() {
+                        cfg.llm.ollama_model = "granite4.2:3b".to_string();
+                        let _ = cfg.save();
+                    }
                     return cfg;
                 }
             }
