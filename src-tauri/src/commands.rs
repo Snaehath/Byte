@@ -7,7 +7,8 @@ use crate::ai::{Capability, ModelManager};
 use crate::ai::llm::{ChatMessage, LlmResult};
 use crate::tools;
 use crate::prompts;
-use crate::core::AssistantResponse;
+use crate::core::{AssistantResponse, resolve_conversation_intent};
+use crate::diagnostics::{PipelineTelemetry, StageTimer};
 use crate::platform::get_active_window_title;
 use crate::config::paths::BytePaths;
 
@@ -35,15 +36,20 @@ pub async fn get_system_health(state: State<'_, AppState>) -> Result<crate::diag
 /// Active conversation lifecycle loop (Listen -> Auto-stop on silence -> Transcribe -> Query -> Play TTS)
 #[tauri::command]
 pub async fn start_interaction(state: State<'_, AppState>, window: tauri::WebviewWindow) -> Result<ProcessResult, String> {
+    let pipeline_start = StageTimer::start();
+    let mut telemetry = PipelineTelemetry::new();
+
     state.is_interacting.store(true, Ordering::SeqCst);
 
     // 1. Start audio capture (silence detection runs automatically)
+    let capture_timer = StageTimer::start();
     audio::start_recording(&state, window.clone())?;
 
     // 2. Wait while recording is active (silence detector or manual click sets is_recording = false)
     while state.is_recording.load(Ordering::SeqCst) {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
+    telemetry.vad_capture_ms = capture_timer.elapsed_ms();
 
     // 3. Emit processing state: recording done, now thinking
     let _ = window.emit("processing", ());
@@ -69,9 +75,10 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
     // Transcribe speech using SpeechService (Whisper STT)
     let speech_service = SpeechService::default();
     log::info!("Starting Whisper transcription...");
-    let whisper_start = std::time::Instant::now();
+    let whisper_timer = StageTimer::start();
     let transcription = speech_service.transcribe(&temp_wav)?;
-    log::info!("Whisper transcription finished in {}ms: '{}'", whisper_start.elapsed().as_millis(), transcription);
+    telemetry.stt_ms = whisper_timer.elapsed_ms();
+    log::info!("Whisper transcription finished in {}ms: '{}'", telemetry.stt_ms, transcription);
     let _ = std::fs::remove_file(&temp_wav);
 
     // Check if user is asking to stop/cancel
@@ -107,9 +114,9 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
     // 5. Process input with Model Manager
     let mut final_response = String::new();
     let mut final_thinking = String::new();
-    let mut auto_listen = false;
     let mut is_tool = false;
     let mut has_error = false;
+    let mut executed_tool_name: Option<String> = None;
 
     // Check if there is a pending tool call awaiting confirmation
     let pending_call_opt = {
@@ -130,6 +137,7 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
         if is_confirmed {
             log::info!("User confirmed pending tool execution: {:?}", pending_call);
             let registry = tools::ToolRegistry::new();
+            let tool_exec_timer = StageTimer::start();
             let execute_result = match registry.execute_tool(&pending_call, &window, &state.http_client, &transcription, &state).await {
                 Ok(output) => output,
                 Err(e) => {
@@ -137,9 +145,11 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
                     format!("I failed to perform that action: {}", e)
                 }
             };
+            telemetry.tool_ms = tool_exec_timer.elapsed_ms();
             let _ = state.pending_tool_transcription.lock().unwrap().take();
             final_response = execute_result;
             is_tool = true;
+            executed_tool_name = Some(pending_call.tool.clone());
         } else if is_cancelled {
             log::info!("User cancelled pending tool execution.");
             let _ = state.pending_tool_transcription.lock().unwrap().take();
@@ -200,7 +210,7 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
             content: transcription.clone(),
         });
 
-        let model_start = std::time::Instant::now();
+        let llm_timer = StageTimer::start();
         log::info!("Interaction: Querying local model manager with native tools...");
 
         let llm_result = match model_manager.execute(
@@ -220,11 +230,12 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
                 }
             }
         };
+        telemetry.llm_ms = llm_timer.elapsed_ms();
 
         if !has_error {
             log::info!(
                 "Model responded in {}ms: content='{}', tool_call={:?}",
-                model_start.elapsed().as_millis(),
+                telemetry.llm_ms,
                 llm_result.content,
                 llm_result.tool_call
             );
@@ -255,6 +266,8 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
                     }
                     final_response = format!("I need your confirmation to execute '{}'. Would you like me to proceed?", display_name);
                 } else {
+                    executed_tool_name = Some(display_name);
+                    let tool_exec_timer = StageTimer::start();
                     match registry.execute_tool(&tool_call, &window, &state.http_client, &transcription, &state).await {
                         Ok(tool_output) => {
                             log::info!("Tool success: {}", tool_output);
@@ -266,6 +279,7 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
                             has_error = true;
                         }
                     }
+                    telemetry.tool_ms = tool_exec_timer.elapsed_ms();
                 }
             } else {
                 final_response = clean_content;
@@ -286,52 +300,21 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
         *m = mood.clone();
     }
 
-    let trans_lower = transcription.to_lowercase();
-    let response_lower = response_text.to_lowercase();
-
-    // Check if user is dismissing/closing the interaction
-    let is_user_dismissal = trans_lower.contains("thank")
-        || trans_lower.contains("nothing")
-        || trans_lower.contains("that's all")
-        || trans_lower.contains("that is all")
-        || trans_lower.contains("that's it")
-        || trans_lower.contains("that is it")
-        || trans_lower.contains("nevermind")
-        || trans_lower.contains("never mind")
-        || trans_lower.contains("i'm good")
-        || trans_lower.contains("im good")
-        || trans_lower.contains("no need")
-        || trans_lower == "ok"
-        || trans_lower == "okay"
-        || trans_lower == "alright"
-        || trans_lower == "got it"
-        || trans_lower == "cool";
-
-    let is_farewell = response_lower.contains("goodbye")
-        || response_lower.contains("bye")
-        || response_lower.contains("see you")
-        || response_lower.contains("farewell")
-        || response_lower.contains("have a great day")
-        || response_lower.contains("have a nice day")
-        || response_lower.contains("have a good day")
-        || response_lower.contains("take care")
-        || response_lower.contains("happy coding")
-        || response_lower.contains("you're welcome")
-        || response_lower.contains("you are welcome")
-        || response_lower.contains("anytime")
-        || response_lower.contains("my pleasure")
-        || response_lower.contains("no problem");
-
+    // Conversation State Machine: Resolve intent & auto-listen state
     let has_pending = state.pending_tool_call.lock().unwrap().is_some();
-    let assistant_asked_question = response_text.trim().ends_with('?');
+    let intent = resolve_conversation_intent(
+        &transcription,
+        &response_text,
+        is_tool,
+        has_pending,
+        has_error,
+    );
+    let auto_listen = intent.should_auto_listen();
+    log::info!("Conversation intent resolved: {:?} (auto_listen: {})", intent, auto_listen);
 
-    if !has_error && !is_user_dismissal && !is_farewell {
-        if has_pending {
-            auto_listen = true;
-        } else if !is_tool && assistant_asked_question {
-            auto_listen = true;
-        }
-    }
+    let is_farewell = intent == crate::core::ConversationIntent::Finished && (
+        response_text.to_lowercase().contains("bye") || response_text.to_lowercase().contains("farewell")
+    );
 
     // Record turn in persistent memory
     if let Ok(mut mem) = state.memory.lock() {
@@ -355,6 +338,7 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
     let window_clone = window.clone();
     let mood_clone = mood.clone();
 
+    let tts_timer = StageTimer::start();
     let _ = tokio::task::spawn_blocking(move || {
         let _ = window_clone.emit("speaking", &mood_clone);
         let speech = SpeechService::default();
@@ -366,8 +350,13 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
             let _ = window_clone.hide();
         }
     }).await;
+    telemetry.tts_synth_ms = tts_timer.elapsed_ms();
+    telemetry.total_ms = pipeline_start.elapsed_ms();
 
     state.is_interacting.store(false, Ordering::SeqCst);
+
+    // Log structured telemetry breakdown table
+    telemetry.print_summary(&transcription, executed_tool_name.as_deref());
 
     Ok(ProcessResult {
         transcription,

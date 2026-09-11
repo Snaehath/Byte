@@ -41,3 +41,20 @@ impl OllamaProvider {
         ).await
     }
 }
+
+impl super::LlmProvider for OllamaProvider {
+    fn model_name(&self) -> &str {
+        &self.model
+    }
+
+    fn chat<'a>(
+        &'a self,
+        client: &'a reqwest::Client,
+        messages: &'a [ChatMessage],
+        tools: Option<&'a [serde_json::Value]>,
+    ) -> super::LlmFuture<'a> {
+        Box::pin(async move {
+            self.ask(client, messages, tools).await
+        })
+    }
+}
