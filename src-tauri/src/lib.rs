@@ -26,6 +26,7 @@ pub mod core;
 pub mod tools;
 pub mod platform;
 pub mod diagnostics;
+pub mod presence;
 pub mod commands;
 
 // Re-exports for backwards-compatibility
@@ -43,6 +44,7 @@ pub struct AppState {
     pub pending_tool_call: Mutex<Option<tools::ToolCall>>,
     pub pending_tool_transcription: Mutex<Option<String>>,
     pub active_interaction: Arc<Mutex<Option<crate::core::InteractionContext>>>,
+    pub presence: crate::presence::PresenceManager,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -74,13 +76,20 @@ pub fn run() {
             pending_tool_call: Mutex::new(None),
             pending_tool_transcription: Mutex::new(None),
             active_interaction: Arc::new(Mutex::new(None)),
+            presence: crate::presence::PresenceManager::new(),
         })
         .invoke_handler(tauri::generate_handler![
             commands::start_interaction,
             commands::stop_action,
-            commands::get_system_health
+            commands::get_system_health,
+            commands::reposition_presence
         ])
         .setup(move |app| {
+            // Position presence window above taskbar on bottom-right of active/primary monitor
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = crate::presence::PlacementEngine::position_window(&window, crate::presence::Anchor::BottomRight);
+            }
+
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
@@ -149,22 +158,19 @@ pub fn run() {
                         .with_handler(move |_app, shortcut, event| {
                             if event.state() == ShortcutState::Pressed {
                                 if shortcut == &ctrl_b_clone {
-                                    log::info!("Global shortcut Ctrl+B pressed!");
+                                    log::info!("Global shortcut Ctrl+B pressed! Invoking presence toggle...");
                                     if let Some(window) = app_handle.get_webview_window("main") {
-                                        if window.is_visible().unwrap_or(false) {
-                                            let _ = window.hide();
-                                        } else {
-                                            let _ = window.show();
-                                            let _ = window.set_focus();
-                                            let _ = app_handle.emit("wakeup", ());
-                                        }
+                                        let state = app_handle.state::<AppState>();
+                                        let _ = state.presence.toggle(&window);
                                     }
                                 }
                             }
                         })
                         .build()
                 )?;
-                app.global_shortcut().register(ctrl_b)?;
+                if let Err(e) = app.global_shortcut().register(ctrl_b) {
+                    log::warn!("Global shortcut Ctrl+B registration notice: {}", e);
+                }
             }
 
             // Start background voice wake word detector

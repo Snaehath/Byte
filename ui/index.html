@@ -6,31 +6,24 @@
     <title>Byte</title>
     <link rel="stylesheet" href="style.css" />
     <link
-      href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600&display=swap"
       rel="stylesheet"
     />
   </head>
   <body>
-    <div class="assistant-widget visible" data-tauri-drag-region>
-      <!-- The glowing, morphing orb -->
-      <div class="orb-container" data-tauri-drag-region>
-        <div id="byte-orb" class="orb state-idle">
-          <div class="orb-core"></div>
-          <div class="orb-fluid-1"></div>
-          <div class="orb-fluid-2"></div>
-          <div class="orb-fluid-3"></div>
-          <div class="orb-glow-1"></div>
-          <div class="orb-glow-2"></div>
-          <div class="orb-logo">byte</div>
-        </div>
+    <div class="presence-widget" data-tauri-drag-region>
+      <!-- Living Audio-Reactive Canvas Orb -->
+      <div class="orb-viewport" data-tauri-drag-region>
+        <canvas id="byte-orb-canvas" width="220" height="175"></canvas>
       </div>
 
-      <!-- Minimal state text -->
-      <div class="status-label">
-        <span id="status-text">Click to speak</span>
+      <!-- Minimal Ambient Presence Status -->
+      <div class="status-badge">
+        <span id="status-text">Click or Ctrl+B</span>
       </div>
     </div>
 
+    <script src="orb.js"></script>
     <script src="main.js"></script>
   </body>
 </html>

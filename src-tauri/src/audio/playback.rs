@@ -24,32 +24,55 @@ pub fn stop_audio() {
 
 pub fn play_audio_file<P: AsRef<Path>>(file_path: P) {
     let path_ref = file_path.as_ref();
-    if CANCEL_PLAYBACK.load(Ordering::SeqCst) {
-        return;
-    }
-    if let Ok(file) = File::open(path_ref) {
-        if let Ok((_stream, stream_handle)) = OutputStream::try_default() {
-            if let Ok(sink) = Sink::try_new(&stream_handle) {
-                if let Ok(source) = Decoder::new(BufReader::new(file)) {
-                    let sink = Arc::new(sink);
-                    if let Ok(mut guard) = ACTIVE_SINK.lock() {
-                        *guard = Some(Arc::clone(&sink));
-                    }
-                    sink.append(source);
-                    while !sink.empty() {
-                        if CANCEL_PLAYBACK.load(Ordering::SeqCst) {
-                            sink.stop();
-                            break;
-                        }
-                        std::thread::sleep(std::time::Duration::from_millis(25));
-                    }
-                    if let Ok(mut guard) = ACTIVE_SINK.lock() {
-                        *guard = None;
-                    }
-                }
-            }
+    // Fresh playback turn: reset cancellation flag
+    CANCEL_PLAYBACK.store(false, Ordering::SeqCst);
+
+    log::info!("play_audio_file: opening audio file '{}'", path_ref.display());
+    let file = match File::open(path_ref) {
+        Ok(f) => f,
+        Err(e) => {
+            log::error!("play_audio_file: failed to open WAV file '{}': {}", path_ref.display(), e);
+            return;
         }
+    };
+
+    let (_stream, stream_handle) = match OutputStream::try_default() {
+        Ok(res) => res,
+        Err(e) => {
+            log::error!("play_audio_file: failed to obtain default audio OutputStream: {}", e);
+            return;
+        }
+    };
+
+    let sink = match Sink::try_new(&stream_handle) {
+        Ok(s) => s,
+        Err(e) => {
+            log::error!("play_audio_file: failed to create audio Sink: {}", e);
+            return;
+        }
+    };
+
+    let source = match Decoder::new(BufReader::new(file)) {
+        Ok(src) => src,
+        Err(e) => {
+            log::error!("play_audio_file: failed to decode audio: {}", e);
+            return;
+        }
+    };
+
+    let sink = Arc::new(sink);
+    if let Ok(mut guard) = ACTIVE_SINK.lock() {
+        *guard = Some(Arc::clone(&sink));
     }
+
+    log::info!("play_audio_file: starting audio playback...");
+    sink.append(source);
+    sink.sleep_until_end();
+
+    if let Ok(mut guard) = ACTIVE_SINK.lock() {
+        *guard = None;
+    }
+    log::info!("play_audio_file: audio playback finished.");
 }
 
 pub fn play_listening_chime() {

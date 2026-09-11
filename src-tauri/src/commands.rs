@@ -1,5 +1,5 @@
 use std::sync::atomic::Ordering;
-use tauri::{State, Emitter};
+use tauri::{State, Emitter, Manager};
 use serde::Serialize;
 use crate::AppState;
 use crate::audio::{self, SpeechService};
@@ -12,6 +12,8 @@ use crate::diagnostics::{PipelineTelemetry, StageTimer};
 use crate::platform::get_active_window_title;
 use crate::config::paths::BytePaths;
 
+use crate::presence::PresenceState;
+
 #[derive(Serialize)]
 pub struct ProcessResult {
     pub transcription: String,
@@ -21,7 +23,7 @@ pub struct ProcessResult {
 }
 
 #[tauri::command]
-pub fn stop_action(state: State<'_, AppState>) -> Result<(), String> {
+pub fn stop_action(state: State<'_, AppState>, app_handle: tauri::AppHandle) -> Result<(), String> {
     // 1. Cancel and take the active interaction context if present (idempotent)
     if let Ok(mut active) = state.active_interaction.lock() {
         if let Some(ctx) = active.take() {
@@ -35,7 +37,16 @@ pub fn stop_action(state: State<'_, AppState>) -> Result<(), String> {
     state.is_recording.store(false, Ordering::SeqCst);
     state.is_interacting.store(false, Ordering::SeqCst);
 
+    if let Some(window) = app_handle.get_webview_window("main") {
+        state.presence.set_state(&window, PresenceState::Cancelled);
+    }
+
     Ok(())
+}
+
+#[tauri::command]
+pub fn reposition_presence(window: tauri::WebviewWindow) -> Result<(), String> {
+    crate::presence::PlacementEngine::position_window(&window, crate::presence::Anchor::BottomRight)
 }
 
 #[tauri::command]
@@ -80,7 +91,8 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
 
     state.is_interacting.store(true, Ordering::SeqCst);
 
-    // 1. Start audio capture (silence detection runs automatically)
+    // 1. Start audio capture & set presence to Listening
+    state.presence.set_state(&window, PresenceState::Listening);
     let capture_timer = StageTimer::start();
     audio::start_recording(&state, window.clone())?;
 
@@ -88,6 +100,7 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
     while state.is_recording.load(Ordering::SeqCst) {
         if context.is_cancelled() {
             log::info!("Interaction {} cancelled during audio recording.", context.id);
+            state.presence.set_state(&window, PresenceState::Cancelled);
             state.is_interacting.store(false, Ordering::SeqCst);
             return Ok(ProcessResult {
                 transcription: String::new(),
@@ -101,6 +114,7 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
     telemetry.vad_capture_ms = capture_timer.elapsed_ms();
 
     if context.is_cancelled() {
+        state.presence.set_state(&window, PresenceState::Cancelled);
         state.is_interacting.store(false, Ordering::SeqCst);
         return Ok(ProcessResult {
             transcription: String::new(),
@@ -111,6 +125,7 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
     }
 
     // 3. Emit processing state: recording done, now thinking
+    state.presence.set_state(&window, PresenceState::Thinking);
     let _ = window.emit("processing", ());
 
     // 4. Fetch the recorded samples
@@ -120,6 +135,7 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
     };
 
     if raw_samples.is_empty() {
+        state.presence.set_state(&window, PresenceState::Idle);
         state.is_interacting.store(false, Ordering::SeqCst);
         return Err("No audio data recorded".to_string());
     }
@@ -142,6 +158,7 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
 
     if context.is_cancelled() {
         log::info!("Interaction {} cancelled after STT transcription.", context.id);
+        state.presence.set_state(&window, PresenceState::Cancelled);
         state.is_interacting.store(false, Ordering::SeqCst);
         return Ok(ProcessResult {
             transcription,
@@ -156,6 +173,7 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
     if clean_lower == "stop" || clean_lower == "cancel" || clean_lower.contains("stop speaking") || clean_lower.contains("shut up") || clean_lower.contains("be quiet") {
         log::info!("Stop/Cancel voice command recognized: '{}'", clean_lower);
         context.cancel();
+        state.presence.set_state(&window, PresenceState::Cancelled);
         audio::stop_audio();
         state.is_interacting.store(false, Ordering::SeqCst);
         return Ok(ProcessResult {
@@ -173,6 +191,7 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
 
     if trimmed.is_empty() || is_noise {
         log::info!("Whisper transcription is empty or ambient noise: '{}'", transcription);
+        state.presence.set_state(&window, PresenceState::Idle);
         state.is_interacting.store(false, Ordering::SeqCst);
         return Ok(ProcessResult {
             transcription,
@@ -309,6 +328,7 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
         }
         _ = cancel_llm => {
             log::info!("Interaction {} cancelled during LLM generation.", context.id);
+            state.presence.set_state(&window, PresenceState::Cancelled);
             state.is_interacting.store(false, Ordering::SeqCst);
             return Ok(ProcessResult {
                 transcription,
@@ -323,6 +343,7 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
     // Verify interaction is still active before processing results or calling tools
     if !is_interaction_valid(&context, &state) {
         log::info!("Interaction {} superseded or cancelled before tool/response handling.", context.id);
+        state.presence.set_state(&window, PresenceState::Cancelled);
         state.is_interacting.store(false, Ordering::SeqCst);
         return Ok(ProcessResult {
             transcription,
@@ -470,6 +491,7 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
         }
         _ = cancel_synth => {
             log::info!("Interaction {} cancelled during TTS synthesis.", context.id);
+            state.presence.set_state(&window, PresenceState::Cancelled);
             state.is_interacting.store(false, Ordering::SeqCst);
             return Ok(ProcessResult {
                 transcription,
@@ -487,6 +509,7 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
     // Check interaction validity before audio playback
     if !is_interaction_valid(&context, &state) {
         log::info!("Interaction {} superseded or cancelled before audio playback.", context.id);
+        state.presence.set_state(&window, PresenceState::Cancelled);
         if let Ok(wav_path) = wav_path_res {
             let _ = std::fs::remove_file(wav_path);
         }
@@ -502,6 +525,7 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
     // Step B: Audio Playback wrapped in tokio::select! for cancellation
     let playback_timer = StageTimer::start();
     if let Ok(wav_path) = wav_path_res {
+        state.presence.set_state(&window, PresenceState::Speaking);
         let cancel_play = context.cancellation.cancelled();
         let play_task = tokio::task::spawn_blocking(move || {
             let _ = window_clone.emit("speaking", &mood_clone);
@@ -519,6 +543,7 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
             _ = play_task => {}
             _ = cancel_play => {
                 log::info!("Interaction {} cancelled during audio playback.", context.id);
+                state.presence.set_state(&window, PresenceState::Cancelled);
                 audio::stop_audio();
             }
         }
@@ -535,6 +560,7 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
         }
     }
 
+    state.presence.set_state(&window, PresenceState::Idle);
     state.is_interacting.store(false, Ordering::SeqCst);
 
     // Log structured telemetry breakdown table

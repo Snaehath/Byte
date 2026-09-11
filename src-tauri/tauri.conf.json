@@ -11,13 +11,16 @@
     "windows": [
       {
         "title": "Byte",
-        "width": 240,
-        "height": 240,
+        "width": 220,
+        "height": 220,
         "resizable": false,
         "fullscreen": false,
         "transparent": true,
         "decorations": false,
-        "center": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false,
+        "center": false,
         "visible": true
       }
     ],

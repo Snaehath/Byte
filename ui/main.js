@@ -1,156 +1,151 @@
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 
-const orb = document.getElementById("byte-orb");
-const statusText = document.getElementById("status-text");
-const assistantWidget = document.querySelector(".assistant-widget");
+const canvas = document.getElementById('byte-orb-canvas');
+const livingOrb = new window.ByteLivingOrb(canvas);
 
-let hideTimeout = null;
-let isRecording = false;
+const statusText = document.getElementById('status-text');
+const statusBadge = document.querySelector('.status-badge');
+const presenceWidget = document.querySelector('.presence-widget');
+const orbViewport = document.querySelector('.orb-viewport');
 
-// Function to run the full conversational lifecycle
-async function runInteraction() {
-  if (isRecording) return;
-  isRecording = true;
+let isRunning = false;
 
-  if (hideTimeout) {
-    clearTimeout(hideTimeout);
-    hideTimeout = null;
+function updateStatusBadge(state) {
+  statusBadge.className = `status-badge ${state}`;
+  switch (state) {
+    case 'idle':
+      statusText.innerText = 'Click or Ctrl+B';
+      break;
+    case 'listening':
+      statusText.innerText = 'Listening...';
+      break;
+    case 'thinking':
+      statusText.innerText = 'Thinking...';
+      break;
+    case 'speaking':
+      statusText.innerText = 'Speaking...';
+      break;
+    case 'cancelled':
+      statusText.innerText = 'Cancelled';
+      break;
+    case 'hidden':
+      presenceWidget.classList.add('hidden');
+      return;
   }
+  presenceWidget.classList.remove('hidden');
+}
 
-  // Ensure window is visible and focused
+// Full conversational lifecycle run
+async function runInteraction() {
+  if (isRunning) return;
+  isRunning = true;
+
   try {
     const { getCurrentWindow } = window.__TAURI__.window;
     const win = getCurrentWindow();
     await win.show();
     await win.setFocus();
-    assistantWidget.classList.add("visible");
   } catch (err) {
-    console.error("Failed to show/focus window:", err);
+    console.warn('Window focus/show notice:', err);
   }
 
-  orb.className = "orb state-listening";
-  statusText.innerText = "Listening...";
-
+  let result = null;
   try {
-    const result = await invoke("start_interaction");
-    console.log("Interaction completed:", result);
+    result = await invoke('start_interaction');
+    console.log('Interaction turn completed:', result);
+
     if (result && result.auto_listen) {
       setTimeout(() => {
-        isRecording = false;
+        isRunning = false;
         runInteraction();
-      }, 300);
+      }, 400);
       return;
     }
   } catch (err) {
-    console.error("Interaction error:", err);
+    console.error('Interaction loop error:', err);
   } finally {
-    resetToIdle();
+    isRunning = false;
+    livingOrb.setAudioLevel(0.0);
+    if (!result || !result.auto_listen) {
+      livingOrb.setState('idle');
+      updateStatusBadge('idle');
+    }
   }
 }
 
-orb.addEventListener("click", async () => {
-  if (!isRecording) {
+// Click orb to speak or stop
+orbViewport.addEventListener('click', async () => {
+  if (!isRunning) {
     runInteraction();
   } else {
-    // Force stop recording early if user clicks the orb during capture
     try {
-      await invoke("stop_action");
+      await invoke('stop_action');
     } catch (err) {
-      console.error("Error stopping recording:", err);
+      console.error('Failed to cancel interaction on orb click:', err);
     }
   }
 });
 
-// Tauri Event Subscriptions from Rust
-listen("processing", () => {
-  orb.className = "orb state-processing";
-  statusText.innerText = "Thinking...";
+// Tauri Event Subscriptions
+listen('presence_state_changed', (event) => {
+  const state = event.payload;
+  livingOrb.setState(state);
+  updateStatusBadge(state);
 });
 
-listen("speaking", (event) => {
-  const mood = event.payload || "calm";
-  orb.className = `orb state-speaking mood-${mood}`;
-  statusText.innerText = "Speaking...";
+listen('audio_level', (event) => {
+  const level = typeof event.payload === 'number' ? event.payload : 0.0;
+  livingOrb.setAudioLevel(level);
 });
 
-listen("wakeup", () => {
-  console.log("Wake word triggered!");
+listen('wakeup', () => {
+  console.log('Byte wakeup signal received!');
   runInteraction();
 });
 
-// Local keyboard shortcut fallback: Ctrl+B to start/open the assistant
-window.addEventListener("keydown", (event) => {
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "b") {
+// Keyboard controls: Escape to dismiss/cancel, Ctrl+B toggle
+window.addEventListener('keydown', async (event) => {
+  if (event.key === 'Escape') {
     event.preventDefault();
-    if (!isRecording) {
-      runInteraction();
-    }
-  }
-});
-
-// Auto-hide on blur (clicking outside) with debounce
-let blurTimeout = null;
-window.addEventListener("blur", () => {
-  blurTimeout = setTimeout(async () => {
     try {
-      if (isRecording) {
-        await invoke("stop_action");
-      }
+      await invoke('stop_action');
     } catch (err) {
-      console.error("Failed to stop recording on blur:", err);
+      console.error('Escape stop error:', err);
     }
-  }, 150);
-});
-
-window.addEventListener("focus", () => {
-  if (blurTimeout) {
-    clearTimeout(blurTimeout);
-    blurTimeout = null;
+  } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'b') {
+    event.preventDefault();
+    if (!isRunning) {
+      runInteraction();
+    } else {
+      await invoke('stop_action');
+    }
   }
 });
 
-function resetToIdle() {
-  isRecording = false;
-  orb.className = "orb state-idle";
-  statusText.innerText = "Click or say 'Hey Byte'";
-
-  if (hideTimeout) {
-    clearTimeout(hideTimeout);
-  }
-}
-
-// Cursor ignore click-through settings
-const orbContainer = document.querySelector(".orb-container");
-
-orbContainer.addEventListener("mouseenter", async () => {
+// Cursor ignore click-through outside orb bounds
+orbViewport.addEventListener('mouseenter', async () => {
   try {
     const { getCurrentWindow } = window.__TAURI__.window;
     await getCurrentWindow().setIgnoreCursorEvents(false);
-  } catch (err) {
-    console.error("Failed to disable ignore cursor events:", err);
-  }
+  } catch (_) {}
 });
 
-orbContainer.addEventListener("mouseleave", async () => {
+orbViewport.addEventListener('mouseleave', async () => {
   try {
     const { getCurrentWindow } = window.__TAURI__.window;
     await getCurrentWindow().setIgnoreCursorEvents(true);
-  } catch (err) {
-    console.error("Failed to enable ignore cursor events:", err);
-  }
+  } catch (_) {}
 });
 
-// Set initial window state to ignore cursor events when loading
-window.addEventListener("DOMContentLoaded", async () => {
+window.addEventListener('DOMContentLoaded', async () => {
   try {
     const { getCurrentWindow } = window.__TAURI__.window;
     await getCurrentWindow().setIgnoreCursorEvents(true);
-    assistantWidget.classList.add("visible");
-  } catch (err) {
-    console.error("Failed to set initial ignore cursor events state:", err);
-  }
+    await invoke('reposition_presence');
+  } catch (_) {}
 });
 
-// Set initial state
-resetToIdle();
+// Initial state setup
+updateStatusBadge('idle');
+livingOrb.setState('idle');

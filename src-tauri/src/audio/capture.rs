@@ -54,10 +54,23 @@ pub fn start_recording(state: &AppState, window: tauri::WebviewWindow) -> Result
                     let mut buffer = recorded_data_clone.lock().unwrap();
                     let current_total = buffer.len();
 
+                    let mut sum_sq = 0.0f32;
+                    let mut count = 0;
                     for frame in data.chunks(channels as usize) {
                         if !frame.is_empty() {
-                            buffer.push(frame[0]);
+                            let sample = frame[0];
+                            buffer.push(sample);
+                            sum_sq += sample * sample;
+                            count += 1;
                         }
+                    }
+
+                    // Emit real-time audio volume level to the frontend living orb
+                    if count > 0 {
+                        let rms = (sum_sq / count as f32).sqrt();
+                        // Scale RMS so conversational voice sits nicely between 0.1 and 1.0
+                        let norm_level = (rms * 12.0).clamp(0.0, 1.0);
+                        let _ = window_clone.emit("audio_level", norm_level);
                     }
 
                     let silence_detected = {
@@ -71,6 +84,7 @@ pub fn start_recording(state: &AppState, window: tauri::WebviewWindow) -> Result
                     if silence_detected {
                         log::info!("VAD detected silence. Auto-stopping voice capture...");
                         is_recording_cb.store(false, Ordering::SeqCst);
+                        let _ = window_clone.emit("audio_level", 0.0f32);
                         play_processing_chime();
                         let _ = window_clone.emit("processing", ());
                     }
