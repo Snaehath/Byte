@@ -1,6 +1,6 @@
 # Byte: Desktop Voice Assistant & AI Companion
 
-**Byte** is a premium, local-first personal desktop AI voice companion and OS automation copilot for Windows built using **Rust (Tauri v2)** and **Vanilla Web Technologies (HTML/CSS/JS Canvas)**. It combines local hardware voice processing (Whisper STT and Piper TTS) with flexible local/cloud LLM intelligence (Qwen 3 4B via Ollama / OpenRouter / Nvidia NIM) to execute system actions, control windows, play music, analyze your screen, organize files, and engage in continuous voice conversation.
+**Byte** is a premium, local-first personal desktop AI voice companion and OS automation copilot for Windows built using **Rust (Tauri v2)** and **Vanilla Web Technologies (HTML/CSS/JS Canvas)**. It combines local hardware voice processing (Whisper STT and Piper TTS) with flexible local/cloud LLM intelligence (Granite 3B / Qwen 3 4B via Ollama / OpenRouter / Nvidia NIM) to execute system actions, control windows, play music, analyze your screen, organize files, and engage in continuous voice conversation.
 
 ---
 
@@ -46,8 +46,11 @@ Byte departs from generic circular buttons and amoeba-like biological blobs in f
 - **Local STT (Speech-to-Text)**: Automatically transcribes voice queries using local `whisper-cli.exe` running the high-performance `ggml-tiny.en.bin` model (~200ms latency).
 - **Local TTS (Text-to-Speech)**: Plays natural spoken answers using `piper.exe` with standard high-quality `.onnx` voices (`en_US-lessac-medium.onnx`).
 - **Room-Noise Calibrated VAD**: Automatically calibrates ambient sound (200ms) and detects speech termination (1.5s trailing silence), ending recordings hands-free.
+- **Greeting Context Isolation**: Trivial greetings (*"hello"*, *"good morning"*) automatically bypass prior conversation history, ensuring the model never hallucinates or repeats stale task baggage.
+- **Strict History Sanitization**: Enforces strict `user` $\leftrightarrow$ `assistant` alternation, pairing completed turns and purging orphan user queries.
 - **Continuous Auto-Listen Followup**: Triggers the microphone automatically after non-destructive responses, enabling natural back-and-forth dialogue.
 - **Immediate Voice Pre-emption**: Stop commands (*"stop"*, *"cancel"*, *"be quiet"*, *"shut up"*) immediately cancel active LLM streams, flush audio sinks, and dismiss operations.
+- **Voice Memory Reset**: Verbal reset commands (*"clear memory"*, *"clear history"*, *"reset conversation"*) wipe the active conversational sliding window on demand.
 
 ### 🛠️ Advanced Desktop Tools & OS Bridge
 Byte safely mediates system actions through strongly typed Rust tool handlers:
@@ -71,7 +74,7 @@ Byte safely mediates system actions through strongly typed Rust tool handlers:
 - **Backend**: Rust (Tauri v2, Tokio async runtime, CPAL audio capture, Hound, Rodio, Image, Windows Win32 / WMI API).
 - **Speech-to-Text**: Whisper.cpp (`whisper-cli.exe` + `ggml-tiny.en.bin`).
 - **Text-to-Speech**: Piper TTS (`piper.exe` + `en_US-lessac-medium.onnx`).
-- **LLM Engine**: Local Ollama (`qwen3-4b:latest`) / OpenRouter / Nvidia NIM Vision.
+- **LLM Engine**: Local Ollama (`granite4.2:3b` / `qwen3-4b`) / OpenRouter / Nvidia NIM Vision.
 
 ---
 
@@ -83,7 +86,7 @@ Byte safely mediates system actions through strongly typed Rust tool handlers:
   - Place `whisper-cli.exe` and `ggml-tiny.en.bin` in `%APPDATA%\Byte\models\` or set `BYTE_WHISPER_EXE` and `BYTE_WHISPER_MODEL`.
   - Place `piper.exe` and `en_US-lessac-medium.onnx` in `%APPDATA%\Byte\models\` or set `BYTE_PIPER_EXE` and `BYTE_PIPER_MODEL`.
 - **LLM Engine**:
-  - **Local**: Ollama running locally (`ollama run qwen3-4b` on port `11434`).
+  - **Local**: Ollama running locally (`ollama run granite4.2:3b` or `ollama run qwen3-4b` on port `11434`).
   - **Cloud**: Set `OPENROUTER_API_KEY` or configure in `%APPDATA%\Byte\config\config.json`.
 
 ### Running the App

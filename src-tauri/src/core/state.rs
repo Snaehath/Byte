@@ -11,16 +11,20 @@ pub enum ConversationState {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ConversationIntent {
-    /// Task or session completed, or user signaled dismissal -> Transition to Idle.
-    Finished,
-    /// Destructive or sensitive action requires user approval -> Transition to WaitingForUser.
+    /// User or assistant greeted -> auto_listen = true (ready for user command)
+    Greeting,
+    /// User or assistant bid farewell / dismissed -> auto_listen = false
+    Farewell,
+    /// Desktop tool or action executed -> auto_listen = false (let user work)
+    Command,
+    /// Assistant asked a question to the user -> auto_listen = true
+    Question,
+    /// Ongoing multi-turn conversational exchange -> auto_listen = true
+    Conversation,
+    /// User or system cancelled / stopped -> auto_listen = false
+    Cancellation,
+    /// Destructive or sensitive action requires user approval -> auto_listen = true
     NeedsConfirmation,
-    /// Assistant actively asked a follow-up question -> Transition to WaitingForUser.
-    AskedQuestion,
-    /// Desktop action executed successfully -> Transition to Idle.
-    ActionCompleted,
-    /// Ongoing multiturn conversational exchange.
-    ContinueConversation,
 }
 
 impl ConversationIntent {
@@ -28,9 +32,10 @@ impl ConversationIntent {
     pub fn should_auto_listen(&self) -> bool {
         matches!(
             self,
-            ConversationIntent::NeedsConfirmation
-                | ConversationIntent::AskedQuestion
-                | ConversationIntent::ContinueConversation
+            ConversationIntent::Greeting
+                | ConversationIntent::Question
+                | ConversationIntent::Conversation
+                | ConversationIntent::NeedsConfirmation
         )
     }
 }
@@ -44,7 +49,7 @@ pub fn resolve_conversation_intent(
     has_error: bool,
 ) -> ConversationIntent {
     if has_error {
-        return ConversationIntent::Finished;
+        return ConversationIntent::Cancellation;
     }
 
     if has_pending_confirmation {
@@ -54,7 +59,17 @@ pub fn resolve_conversation_intent(
     let trans_clean = transcription.trim().to_lowercase();
     let resp_clean = response_text.trim().to_lowercase();
 
-    // 1. Explicit user dismissal / closure
+    // 1. Explicit cancellation or stop
+    if trans_clean == "stop"
+        || trans_clean == "cancel"
+        || trans_clean.contains("shut up")
+        || trans_clean.contains("be quiet")
+        || trans_clean.contains("stop speaking")
+    {
+        return ConversationIntent::Cancellation;
+    }
+
+    // 2. Explicit user dismissal / closure
     let is_user_dismissal = trans_clean.contains("thank")
         || trans_clean.contains("nothing")
         || trans_clean.contains("that's all")
@@ -70,13 +85,13 @@ pub fn resolve_conversation_intent(
         || trans_clean == "okay"
         || trans_clean == "alright"
         || trans_clean == "got it"
-        || trans_clean == "cool";
+        || trans_clean == "cool"
+        || trans_clean.contains("bye")
+        || trans_clean.contains("goodbye")
+        || trans_clean.contains("see ya")
+        || trans_clean.contains("see you");
 
-    if is_user_dismissal {
-        return ConversationIntent::Finished;
-    }
-
-    // 2. Explicit assistant farewell or sign-off
+    // 3. Explicit assistant farewell
     let is_assistant_farewell = resp_clean.contains("goodbye")
         || resp_clean.contains("bye")
         || resp_clean.contains("see you")
@@ -92,22 +107,50 @@ pub fn resolve_conversation_intent(
         || resp_clean.contains("my pleasure")
         || resp_clean.contains("no problem");
 
-    if is_assistant_farewell {
-        return ConversationIntent::Finished;
+    if is_user_dismissal || is_assistant_farewell {
+        return ConversationIntent::Farewell;
     }
 
-    // 3. Desktop action execution complete
+    // 4. Desktop action execution complete
     if is_tool {
-        return ConversationIntent::ActionCompleted;
+        return ConversationIntent::Command;
     }
 
-    // 4. Assistant asked a question to the user
-    if response_text.trim().ends_with('?') {
-        return ConversationIntent::AskedQuestion;
+    // 5. Greeting (user greeted, or assistant responded to a greeting)
+    let is_greeting = crate::prompts::is_simple_greeting(&transcription)
+        || resp_clean.starts_with("good morning")
+        || resp_clean.starts_with("good afternoon")
+        || resp_clean.starts_with("good evening")
+        || resp_clean.starts_with("hello")
+        || resp_clean.starts_with("hi ");
+
+    if is_greeting {
+        return ConversationIntent::Greeting;
     }
 
-    // Default policy: informative statements transition to Finished (Idle)
-    ConversationIntent::Finished
+    // 6. Question inquiry (user asked a question or assistant asked a clarifying question)
+    let is_user_question = trans_clean.ends_with('?')
+        || trans_clean.starts_with("what")
+        || trans_clean.starts_with("who")
+        || trans_clean.starts_with("where")
+        || trans_clean.starts_with("when")
+        || trans_clean.starts_with("why")
+        || trans_clean.starts_with("how")
+        || trans_clean.starts_with("is ")
+        || trans_clean.starts_with("are ")
+        || trans_clean.starts_with("can ")
+        || trans_clean.starts_with("could ")
+        || trans_clean.contains("what is")
+        || trans_clean.contains("what's");
+
+    let is_assistant_question = response_text.trim().ends_with('?');
+
+    if is_user_question || is_assistant_question {
+        return ConversationIntent::Question;
+    }
+
+    // 7. Casual conversation, jokes, or open chat statements
+    ConversationIntent::Conversation
 }
 
 #[cfg(test)]
@@ -115,15 +158,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_question_prompts_auto_listen() {
+    fn test_greeting_intent_auto_listens() {
         let intent = resolve_conversation_intent(
-            "Hello, how are you?",
-            "I'm doing great! How can I help you today?",
+            "Hello, good morning.",
+            "Good morning! How can I help you today?",
             false,
             false,
             false,
         );
-        assert_eq!(intent, ConversationIntent::AskedQuestion);
+        assert_eq!(intent, ConversationIntent::Greeting);
+        assert!(intent.should_auto_listen());
+    }
+
+    #[test]
+    fn test_question_prompts_auto_listen() {
+        let intent = resolve_conversation_intent(
+            "Check my system",
+            "Which drive would you like me to inspect?",
+            false,
+            false,
+            false,
+        );
+        assert_eq!(intent, ConversationIntent::Question);
         assert!(intent.should_auto_listen());
     }
 
@@ -131,12 +187,12 @@ mod tests {
     fn test_user_dismissal_stops_listening() {
         let intent = resolve_conversation_intent(
             "Nothing. Thank you.",
-            "You're welcome! Happy coding!",
+            "You're welcome! Have a great day!",
             false,
             false,
             false,
         );
-        assert_eq!(intent, ConversationIntent::Finished);
+        assert_eq!(intent, ConversationIntent::Farewell);
         assert!(!intent.should_auto_listen());
     }
 
@@ -149,7 +205,7 @@ mod tests {
             false,
             false,
         );
-        assert_eq!(intent, ConversationIntent::ActionCompleted);
+        assert_eq!(intent, ConversationIntent::Command);
         assert!(!intent.should_auto_listen());
     }
 
@@ -163,6 +219,32 @@ mod tests {
             false,
         );
         assert_eq!(intent, ConversationIntent::NeedsConfirmation);
+        assert!(intent.should_auto_listen());
+    }
+
+    #[test]
+    fn test_cpu_query_resolves_to_question() {
+        let intent = resolve_conversation_intent(
+            "What is my CPU usage?",
+            "Your CPU is currently at 14% utilization.",
+            false,
+            false,
+            false,
+        );
+        assert_eq!(intent, ConversationIntent::Question);
+        assert!(intent.should_auto_listen());
+    }
+
+    #[test]
+    fn test_tell_joke_resolves_to_conversation() {
+        let intent = resolve_conversation_intent(
+            "Tell me a joke.",
+            "Why do programmers prefer dark mode? Because light attracts bugs!",
+            false,
+            false,
+            false,
+        );
+        assert_eq!(intent, ConversationIntent::Conversation);
         assert!(intent.should_auto_listen());
     }
 }
