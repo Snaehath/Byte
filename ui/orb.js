@@ -58,7 +58,7 @@ class ByteLivingOrb {
         colorMid: '#0984e3',
         colorEdge: '#00cec9',
         colorAura: 'rgba(9, 132, 227, 0.22)',
-        particleSpeed: 0.8,
+        particleSpeed: 0.55,     // Serene, slow cosmic drift (~30s orbit)
         particleTrackRadius: 48,
         compression: 0.0,
       },
@@ -74,7 +74,7 @@ class ByteLivingOrb {
         colorMid: '#0984e3',
         colorEdge: '#74b9ff',
         colorAura: 'rgba(0, 210, 211, 0.35)',
-        particleSpeed: 1.4,
+        particleSpeed: 0.85,     // Gentle attentiveness
         particleTrackRadius: 52,
         compression: 0.0,
       },
@@ -90,7 +90,7 @@ class ByteLivingOrb {
         colorMid: '#6c5ce7',
         colorEdge: '#e056fd',
         colorAura: 'rgba(108, 92, 231, 0.38)',
-        particleSpeed: 2.6,      // Fast accelerated orbit
+        particleSpeed: 1.5,      // Controlled cognitive acceleration
         particleTrackRadius: 44, // Tight gravitational pull
         compression: 3.0,
       },
@@ -106,7 +106,7 @@ class ByteLivingOrb {
         colorMid: '#00b894',
         colorEdge: '#55efc4',
         colorAura: 'rgba(0, 184, 148, 0.36)',
-        particleSpeed: 1.8,
+        particleSpeed: 0.95,     // Harmonic speech orbit
         particleTrackRadius: 54,
         compression: 0.0,
       },
@@ -122,7 +122,7 @@ class ByteLivingOrb {
         colorMid: '#e17055',
         colorEdge: '#d63031',
         colorAura: 'rgba(214, 48, 49, 0.25)',
-        particleSpeed: 0.5,
+        particleSpeed: 0.35,     // Calming deceleration
         particleTrackRadius: 42,
         compression: 4.0,
       },
@@ -144,19 +144,21 @@ class ByteLivingOrb {
     this.ctx.scale(dpr, dpr);
   }
 
-  initOrbitalParticles(count) {
+  initOrbitalParticles(count = 20) {
     this.particles = [];
     // 3 orbital lanes: inner (lane 0), mid (lane 1), outer (lane 2)
     for (let i = 0; i < count; i++) {
       const lane = i % 3;
       const baseDistance = 44 + lane * 13 + (Math.random() - 0.5) * 6;
+      // Base angular speed in radians per second (~0.20 - 0.35 rad/s)
+      const baseRadPerSec = 0.20 + (2 - lane) * 0.07;
       this.particles.push({
         lane,
         angle: (i / count) * Math.PI * 2 + Math.random() * 0.4,
         distance: baseDistance,
         baseDistance,
-        speed: (0.012 + (2 - lane) * 0.006) * (Math.random() > 0.15 ? 1 : -1),
-        size: 1.0 + Math.random() * 1.6,
+        speed: baseRadPerSec * (Math.random() > 0.25 ? 1 : -1),
+        size: 1.0 + Math.random() * 1.5,
         pulseOffset: Math.random() * Math.PI * 2,
         tilt: 0.72 + (lane * 0.05), // Elliptical 3D tilt
       });
@@ -422,9 +424,9 @@ class ByteLivingOrb {
     this.ctx.save();
 
     for (const p of this.particles) {
-      // Accelerate orbit in thinking state or on audio response
-      const speedMultiplier = params.particleSpeed * (isThinking ? 1.6 : 1.0) * (1.0 + this.audioLevel * 1.5);
-      p.angle += p.speed * speedMultiplier;
+      // Accelerate orbit in thinking state or on audio response (scaled by dt for frame-rate independence)
+      const speedMultiplier = params.particleSpeed * (isThinking ? 1.4 : 1.0) * (1.0 + this.audioLevel * 0.8);
+      p.angle += p.speed * speedMultiplier * dt;
 
       // Elliptical coordinate projection
       const sinA = Math.sin(p.angle);
@@ -435,7 +437,7 @@ class ByteLivingOrb {
       if (inBack !== isBackHalf) continue;
 
       // Gravitational pull: tracks tighten during thinking
-      const trackDist = params.particleTrackRadius + (p.lane * 11) + Math.sin(this.time * 2.0 + p.pulseOffset) * 2.5;
+      const trackDist = params.particleTrackRadius + (p.lane * 11) + Math.sin(this.time * 1.2 + p.pulseOffset) * 2.0;
       const px = this.centerX + cosA * trackDist;
       const py = this.centerY + sinA * (trackDist * p.tilt);
 
