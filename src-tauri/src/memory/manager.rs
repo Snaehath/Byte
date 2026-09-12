@@ -56,7 +56,34 @@ impl Default for ByteMemory {
 impl ByteMemory {
     pub fn load() -> Self {
         let storage = JsonFileStorage::default();
-        storage.load().unwrap_or_default()
+        let mut mem = storage.load().unwrap_or_default();
+        mem.sanitize_recent_turns();
+        mem
+    }
+
+    /// Guarantee that stored history only contains complete user-assistant pairs
+    pub fn sanitize_recent_turns(&mut self) {
+        let mut clean = Vec::new();
+        for turn in &self.recent_conversation {
+            match turn.role.as_str() {
+                "user" => {
+                    if clean.last().map(|t: &ConversationTurn| t.role.as_str()) == Some("user") {
+                        continue;
+                    }
+                    clean.push(turn.clone());
+                }
+                "assistant" => {
+                    if clean.last().map(|t: &ConversationTurn| t.role.as_str()) == Some("user") {
+                        clean.push(turn.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+        if clean.last().map(|t| t.role.as_str()) == Some("user") {
+            clean.pop();
+        }
+        self.recent_conversation = clean;
     }
 
     pub fn save(&self) -> Result<(), String> {
