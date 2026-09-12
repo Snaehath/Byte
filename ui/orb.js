@@ -1,13 +1,14 @@
 /**
- * Byte Living Canvas Orb Engine (Strict Specification Implementation)
+ * Byte Energy Core Engine
  * 
- * 60+ FPS Organic Multi-Layer Liquid Canvas Engine
- * - Smooth quadratic Bezier spline closed contour (perfectly fluid, non-polygonal)
- * - Multi-harmonic perimeter wave synthesis (never a static circle)
- * - Deep 3D chromatic liquid core with dynamic dynamic radial sheen
- * - High-DPI canvas auto-scaling (Retina / 4K / Windows 125%-175% crispness)
- * - Real-time audio reactivity for microphone RMS and speech playback
- * - Floating ambient embers with energy-based orbit and luminescence
+ * 60+ FPS Living Quantum Energy Core
+ * - 80% sphere + 20% living energy (90-95% circular base silhouette)
+ * - 8-12 harmonic micro-perimeter wave synthesis (subtle ±3-6% breathing ripple, no amoeba bulges)
+ * - High-lumen radiant white nucleus communicating machine intelligence
+ * - Concentric gravitational particle orbits with 3D elliptical depth cueing
+ * - Independent breathing outer aura with periodic cognitive expansion in Thinking state
+ * - Audio-reactive surface micro-ripples and voice pulse modulation
+ * - High-DPI auto-scaling for crisp 4K / Windows scaling displays
  */
 
 class ByteLivingOrb {
@@ -21,13 +22,12 @@ class ByteLivingOrb {
 
     this.width = 220;
     this.height = 175;
-    this.canvas.width = this.width;
-    this.canvas.height = this.height;
+    this.setupHighDpi();
 
     this.centerX = this.width / 2;
     this.centerY = this.height / 2 - 2;
 
-    // Time & clock
+    // Clock
     this.time = 0;
     this.lastFrameTime = performance.now();
 
@@ -40,91 +40,125 @@ class ByteLivingOrb {
     this.audioLevel = 0.0;
     this.targetAudioLevel = 0.0;
 
-    // Floating ambient particle embers
+    // Gravitational orbital particles (3 distinct energy tracks)
     this.particles = [];
-    this.initParticles(24);
+    this.initOrbitalParticles(28);
 
-    // Strict visual presets per presence state
+    // Energy Core visual presets per presence state
     this.presets = {
       idle: {
-        baseRadius: 44,
-        waveAmp: 4.0,
-        speed: 0.035,
-        auraRadius: 66,
-        colorCore: '#706fd3',
-        colorMid: '#38ada9',
+        baseRadius: 45,
+        waveAmp: 1.8,            // ±4% deformation (96% circular)
+        speed: 0.028,            // Slow, majestic breathing
+        auraRadius: 64,
+        auraPulseAmp: 4.0,
+        coreBrightness: 0.95,
+        colorCore: '#ffffff',
+        colorInnerGlow: '#6c5ce7',
+        colorMid: '#0984e3',
         colorEdge: '#00cec9',
-        colorGlow: 'rgba(56, 173, 169, 0.32)',
-        particleSpeed: 0.6,
-        rotationSpeed: 0.012,
+        colorAura: 'rgba(9, 132, 227, 0.22)',
+        particleSpeed: 0.8,
+        particleTrackRadius: 48,
+        compression: 0.0,
       },
       listening: {
-        baseRadius: 50,
-        waveAmp: 9.0,
-        speed: 0.075,
-        auraRadius: 80,
-        colorCore: '#00d2d3',
+        baseRadius: 48,
+        waveAmp: 2.4,            // Subtle acoustic perturbation
+        speed: 0.045,
+        auraRadius: 72,
+        auraPulseAmp: 6.0,
+        coreBrightness: 1.0,
+        colorCore: '#ffffff',
+        colorInnerGlow: '#00d2d3',
         colorMid: '#0984e3',
         colorEdge: '#74b9ff',
-        colorGlow: 'rgba(0, 210, 211, 0.48)',
-        particleSpeed: 1.5,
-        rotationSpeed: 0.035,
+        colorAura: 'rgba(0, 210, 211, 0.35)',
+        particleSpeed: 1.4,
+        particleTrackRadius: 52,
+        compression: 0.0,
       },
       thinking: {
-        baseRadius: 46,
-        waveAmp: 6.5,
-        speed: 0.095,
-        auraRadius: 72,
-        colorCore: '#a55eea',
-        colorMid: '#fd79a8',
-        colorEdge: '#fdcb6e',
-        colorGlow: 'rgba(165, 94, 234, 0.42)',
-        particleSpeed: 1.8,
-        rotationSpeed: 0.075,
+        baseRadius: 42,          // Concentrated / slightly compressed core
+        waveAmp: 2.0,            // Focused traveling perimeter wave
+        speed: 0.08,             // Rapid cognitive energy flow
+        auraRadius: 68,
+        auraPulseAmp: 9.0,       // 1.5-second rhythmic brainwave pulse
+        coreBrightness: 1.15,    // High-lumen intense white center
+        colorCore: '#ffffff',
+        colorInnerGlow: '#a29bfe',
+        colorMid: '#6c5ce7',
+        colorEdge: '#e056fd',
+        colorAura: 'rgba(108, 92, 231, 0.38)',
+        particleSpeed: 2.6,      // Fast accelerated orbit
+        particleTrackRadius: 44, // Tight gravitational pull
+        compression: 3.0,
       },
       speaking: {
-        baseRadius: 52,
-        waveAmp: 13.0,
-        speed: 0.085,
-        auraRadius: 84,
-        colorCore: '#00b894',
-        colorMid: '#0984e3',
+        baseRadius: 47,
+        waveAmp: 2.8,            // Voice ripple modulation
+        speed: 0.05,
+        auraRadius: 78,
+        auraPulseAmp: 8.0,
+        coreBrightness: 1.05,
+        colorCore: '#ffffff',
+        colorInnerGlow: '#00cec9',
+        colorMid: '#00b894',
         colorEdge: '#55efc4',
-        colorGlow: 'rgba(0, 184, 148, 0.52)',
-        particleSpeed: 2.2,
-        rotationSpeed: 0.045,
+        colorAura: 'rgba(0, 184, 148, 0.36)',
+        particleSpeed: 1.8,
+        particleTrackRadius: 54,
+        compression: 0.0,
       },
       cancelled: {
-        baseRadius: 36,
-        waveAmp: 2.5,
-        speed: 0.12,
+        baseRadius: 38,
+        waveAmp: 1.2,
+        speed: 0.04,
         auraRadius: 54,
-        colorCore: '#ff7675',
-        colorMid: '#d63031',
-        colorEdge: '#fab1a0',
-        colorGlow: 'rgba(214, 48, 49, 0.35)',
-        particleSpeed: 0.4,
-        rotationSpeed: 0.02,
+        auraPulseAmp: 2.0,
+        coreBrightness: 0.75,
+        colorCore: '#ffffff',
+        colorInnerGlow: '#fab1a0',
+        colorMid: '#e17055',
+        colorEdge: '#d63031',
+        colorAura: 'rgba(214, 48, 49, 0.25)',
+        particleSpeed: 0.5,
+        particleTrackRadius: 42,
+        compression: 4.0,
       },
     };
 
     this.currentParams = { ...this.presets.idle };
 
-    // Start 60 FPS animation loop
+    // Bind and start rendering loop
     this.render = this.render.bind(this);
     requestAnimationFrame(this.render);
   }
 
-  initParticles(count) {
+  setupHighDpi() {
+    const dpr = window.devicePixelRatio || 1;
+    this.canvas.width = this.width * dpr;
+    this.canvas.height = this.height * dpr;
+    this.canvas.style.width = `${this.width}px`;
+    this.canvas.style.height = `${this.height}px`;
+    this.ctx.scale(dpr, dpr);
+  }
+
+  initOrbitalParticles(count) {
     this.particles = [];
+    // 3 orbital lanes: inner (lane 0), mid (lane 1), outer (lane 2)
     for (let i = 0; i < count; i++) {
+      const lane = i % 3;
+      const baseDistance = 44 + lane * 13 + (Math.random() - 0.5) * 6;
       this.particles.push({
-        angle: Math.random() * Math.PI * 2,
-        distance: 38 + Math.random() * 40,
-        size: 1.2 + Math.random() * 2.2,
-        speed: 0.01 + Math.random() * 0.025,
-        alpha: 0.25 + Math.random() * 0.65,
+        lane,
+        angle: (i / count) * Math.PI * 2 + Math.random() * 0.4,
+        distance: baseDistance,
+        baseDistance,
+        speed: (0.012 + (2 - lane) * 0.006) * (Math.random() > 0.15 ? 1 : -1),
+        size: 1.0 + Math.random() * 1.6,
         pulseOffset: Math.random() * Math.PI * 2,
+        tilt: 0.72 + (lane * 0.05), // Elliptical 3D tilt
       });
     }
   }
@@ -141,18 +175,22 @@ class ByteLivingOrb {
   }
 
   interpolateParams(from, to, t) {
-    const lerp = (a, b, factor) => a + (b - a) * factor;
+    const lerp = (a, b, f) => a + (b - a) * f;
     return {
       baseRadius: lerp(from.baseRadius, to.baseRadius, t),
       waveAmp: lerp(from.waveAmp, to.waveAmp, t),
       speed: lerp(from.speed, to.speed, t),
       auraRadius: lerp(from.auraRadius, to.auraRadius, t),
+      auraPulseAmp: lerp(from.auraPulseAmp, to.auraPulseAmp, t),
+      coreBrightness: lerp(from.coreBrightness, to.coreBrightness, t),
       particleSpeed: lerp(from.particleSpeed, to.particleSpeed, t),
-      rotationSpeed: lerp(from.rotationSpeed, to.rotationSpeed, t),
+      particleTrackRadius: lerp(from.particleTrackRadius, to.particleTrackRadius, t),
+      compression: lerp(from.compression, to.compression, t),
       colorCore: t > 0.5 ? to.colorCore : from.colorCore,
+      colorInnerGlow: t > 0.5 ? to.colorInnerGlow : from.colorInnerGlow,
       colorMid: t > 0.5 ? to.colorMid : from.colorMid,
       colorEdge: t > 0.5 ? to.colorEdge : from.colorEdge,
-      colorGlow: t > 0.5 ? to.colorGlow : from.colorGlow,
+      colorAura: t > 0.5 ? to.colorAura : from.colorAura,
     };
   }
 
@@ -163,7 +201,7 @@ class ByteLivingOrb {
 
     // Smooth state morphing
     if (this.stateTransition < 1.0) {
-      this.stateTransition = Math.min(1.0, this.stateTransition + dt * 3.8);
+      this.stateTransition = Math.min(1.0, this.stateTransition + dt * 3.5);
       const fromPreset = this.presets[this.currentState] || this.presets.idle;
       const toPreset = this.presets[this.targetState] || this.presets.idle;
       this.currentParams = this.interpolateParams(fromPreset, toPreset, this.stateTransition);
@@ -172,93 +210,128 @@ class ByteLivingOrb {
       }
     }
 
-    // Audio reactivity dampening
-    this.audioLevel += (this.targetAudioLevel - this.audioLevel) * 0.25;
+    // Audio reactivity smoothing
+    this.audioLevel += (this.targetAudioLevel - this.audioLevel) * 0.28;
 
-    // Clear canvas
+    // Clear viewport
     this.ctx.clearRect(0, 0, this.width, this.height);
 
-    // 1. Outer ambient glow aura
-    this.drawAura();
+    // 1. Draw back-half orbital particles (behind core depth illusion)
+    this.drawParticles(dt, true);
 
-    // 2. Floating ambient embers
-    this.drawParticles(dt);
+    // 2. Draw dual-layer breathing aura
+    this.drawLuminousAura();
 
-    // 3. Smooth quadratic liquid fluid core
-    this.drawFluidCore();
+    // 3. Draw high-lumen living Energy Core
+    this.drawEnergyCore();
+
+    // 4. Draw front-half orbital particles (in front of core)
+    this.drawParticles(dt, false);
 
     requestAnimationFrame(this.render);
   }
 
-  drawAura() {
+  /**
+   * Dual-Layer Atmospheric Aura:
+   * Inner halo provides soft bloom; outer aura breathes independently
+   * In 'thinking' state, pulses outward periodically every ~1.5s.
+   */
+  drawLuminousAura() {
     const params = this.currentParams;
-    const audioBoost = this.audioLevel * 18.0;
-    const auraRadius = params.auraRadius + Math.sin(this.time * 2.2) * 3.5 + audioBoost;
-
-    const auraGrad = this.ctx.createRadialGradient(
-      this.centerX,
-      this.centerY,
-      Math.max(1, params.baseRadius * 0.4),
-      this.centerX,
-      this.centerY,
-      Math.max(2, auraRadius)
-    );
-    auraGrad.addColorStop(0, params.colorGlow);
-    auraGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
-
-    this.ctx.save();
-    this.ctx.beginPath();
-    this.ctx.arc(this.centerX, this.centerY, auraRadius, 0, Math.PI * 2);
-    this.ctx.fillStyle = auraGrad;
-    this.ctx.fill();
-    this.ctx.restore();
-  }
-
-  drawParticles(dt) {
-    const params = this.currentParams;
-    this.ctx.save();
-
-    for (const p of this.particles) {
-      p.angle += p.speed * params.particleSpeed * (1.0 + this.audioLevel * 2.8);
-      const currentDist = p.distance + Math.sin(this.time * 2.6 + p.pulseOffset) * 6.0 + this.audioLevel * 14.0;
-
-      const px = this.centerX + Math.cos(p.angle) * currentDist;
-      const py = this.centerY + Math.sin(p.angle) * currentDist;
-      const alpha = p.alpha * (0.6 + Math.sin(this.time * 3.2 + p.pulseOffset) * 0.4);
-
-      this.ctx.beginPath();
-      this.ctx.arc(px, py, p.size, 0, Math.PI * 2);
-      this.ctx.fillStyle = `rgba(255, 255, 255, ${Math.max(0, Math.min(1, alpha)).toFixed(2)})`;
-      this.ctx.shadowBlur = 4;
-      this.ctx.shadowColor = params.colorCore;
-      this.ctx.fill();
+    const isThinking = this.targetState === 'thinking' || this.currentState === 'thinking';
+    
+    // Cognitive pulse every ~1.5 seconds during thinking
+    let thinkingPulse = 0.0;
+    if (isThinking) {
+      const cycle = (this.time % 1.5) / 1.5; // 0.0 to 1.0
+      thinkingPulse = Math.sin(cycle * Math.PI) * params.auraPulseAmp * 1.5;
     }
 
+    const audioPulse = this.audioLevel * 14.0;
+    const breathingCycle = Math.sin(this.time * 1.8) * params.auraPulseAmp;
+    const currentAuraRadius = Math.max(20, params.auraRadius + breathingCycle + thinkingPulse + audioPulse);
+
+    this.ctx.save();
+
+    // 1. Outer Ethereal Atmosphere
+    const outerGrad = this.ctx.createRadialGradient(
+      this.centerX,
+      this.centerY,
+      params.baseRadius * 0.7,
+      this.centerX,
+      this.centerY,
+      currentAuraRadius
+    );
+    outerGrad.addColorStop(0, params.colorAura);
+    outerGrad.addColorStop(0.65, params.colorAura.replace(/[\d\.]+\)$/, '0.08)'));
+    outerGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+
+    this.ctx.beginPath();
+    this.ctx.arc(this.centerX, this.centerY, currentAuraRadius, 0, Math.PI * 2);
+    this.ctx.fillStyle = outerGrad;
+    this.ctx.fill();
+
+    // 2. Inner Energy Sheen (tight corona hugging the nucleus)
+    const innerCoronaRadius = params.baseRadius + 8.0 + (isThinking ? Math.sin(this.time * 6.0) * 2.0 : 0);
+    const coronaGrad = this.ctx.createRadialGradient(
+      this.centerX,
+      this.centerY,
+      params.baseRadius * 0.4,
+      this.centerX,
+      this.centerY,
+      innerCoronaRadius
+    );
+    coronaGrad.addColorStop(0, 'rgba(255, 255, 255, 0.25)');
+    coronaGrad.addColorStop(0.5, params.colorInnerGlow);
+    coronaGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+
+    this.ctx.beginPath();
+    this.ctx.arc(this.centerX, this.centerY, innerCoronaRadius, 0, Math.PI * 2);
+    this.ctx.fillStyle = coronaGrad;
+    this.ctx.fill();
+
     this.ctx.restore();
   }
 
-  drawFluidCore() {
+  /**
+   * Living Energy Core:
+   * 80% sphere + 20% living energy.
+   * High-harmonic subtle wave synthesis (8-12 smooth micro-waves, ±3-6% radius deviation).
+   * Luminous radiant white intelligence center, rich cyan/violet depth, no amoeba bulges.
+   */
+  drawEnergyCore() {
     const params = this.currentParams;
-    const pointsCount = 48;
+    const pointsCount = 64;
     const angleStep = (Math.PI * 2) / pointsCount;
-    const audioDisplacement = this.audioLevel * 24.0;
-    const rotation = this.time * params.rotationSpeed * Math.PI;
+    const isThinking = this.targetState === 'thinking' || this.currentState === 'thinking';
 
-    // Synthesize perimeter points using multi-harmonic waves
+    // Base radius with subtle compression in thinking/cancelled states
+    const breathing = Math.sin(this.time * 2.2) * 1.2;
+    const effectiveRadius = Math.max(12, params.baseRadius - params.compression + breathing);
+
+    // Audio reactivity micro-ripples
+    const audioRipple = this.audioLevel * 3.5;
+
+    // Synthesize perimeter points
     const points = [];
     for (let i = 0; i < pointsCount; i++) {
-      const angle = i * angleStep + rotation;
+      const angle = i * angleStep;
 
-      // 4 harmonic waves for completely organic, non-circular boundary
-      const wave1 = Math.sin(angle * 3.0 + this.time * (params.speed * 38.0)) * params.waveAmp;
-      const wave2 = Math.cos(angle * 5.0 - this.time * (params.speed * 26.0)) * (params.waveAmp * 0.55);
-      const wave3 = Math.sin(angle * 7.0 + this.time * (params.speed * 48.0)) * (params.waveAmp * 0.28);
-      const wave4 = Math.cos(angle * 2.0 + this.time * (params.speed * 18.0)) * (params.waveAmp * 0.4);
+      // 8 to 12 smooth harmonic waves (subtle ±3% to 6% ripple, never random amoeba blobs)
+      const wave1 = Math.sin(angle * 8.0 + this.time * 2.6) * (params.waveAmp * 0.55);
+      const wave2 = Math.cos(angle * 10.0 - this.time * 2.1) * (params.waveAmp * 0.35);
+      const wave3 = Math.sin(angle * 12.0 + this.time * 3.4) * (params.waveAmp * 0.20);
 
-      // Acoustic ripple modulation
-      const audioRipple = Math.sin(angle * 4.0 + this.time * 9.0) * audioDisplacement;
+      // Thinking: a focused energy wave sweeping smoothly around the perimeter
+      let travelingWave = 0.0;
+      if (isThinking) {
+        travelingWave = Math.sin(angle * 4.0 - this.time * 5.5) * 1.6;
+      }
 
-      const r = Math.max(10, params.baseRadius + wave1 + wave2 + wave3 + wave4 + audioRipple);
+      // Acoustic vibration during voice input / output
+      const soundWave = Math.sin(angle * 14.0 + this.time * 16.0) * audioRipple;
+
+      const r = effectiveRadius + wave1 + wave2 + wave3 + travelingWave + soundWave;
       points.push({
         x: this.centerX + Math.cos(angle) * r,
         y: this.centerY + Math.sin(angle) * r,
@@ -268,7 +341,7 @@ class ByteLivingOrb {
     this.ctx.save();
     this.ctx.beginPath();
 
-    // Connect points using quadratic Bezier splines for silky-smooth fluid curvature
+    // Silky smooth closed spline via quadratic midpoints
     const len = points.length;
     let midX = (points[0].x + points[1].x) / 2;
     let midY = (points[0].y + points[1].y) / 2;
@@ -280,45 +353,110 @@ class ByteLivingOrb {
       midY = (points[i].y + points[nextIdx].y) / 2;
       this.ctx.quadraticCurveTo(points[i].x, points[i].y, midX, midY);
     }
-
-    // Connect last segment to initial midpoint
     midX = (points[0].x + points[1].x) / 2;
     midY = (points[0].y + points[1].y) / 2;
     this.ctx.quadraticCurveTo(points[0].x, points[0].y, midX, midY);
     this.ctx.closePath();
 
-    // 3D Liquid Core Radial Gradient
-    const gradOffsetX = Math.sin(this.time * 1.8) * 6.0;
-    const gradOffsetY = Math.cos(this.time * 1.8) * 6.0;
+    // Radiant Intelligence Nucleus (pure intense white core -> luminous mid -> deep electric shell)
+    const focalShiftX = Math.sin(this.time * 1.2) * 2.5;
+    const focalShiftY = Math.cos(this.time * 1.2) * 2.5;
     const coreGrad = this.ctx.createRadialGradient(
-      this.centerX + gradOffsetX,
-      this.centerY + gradOffsetY,
-      3,
+      this.centerX + focalShiftX,
+      this.centerY + focalShiftY,
+      1,
       this.centerX,
       this.centerY,
-      Math.max(15, params.baseRadius + params.waveAmp + audioDisplacement)
+      effectiveRadius + 4
     );
 
+    // Brilliant white center communicates AI consciousness
     coreGrad.addColorStop(0, '#ffffff');
-    coreGrad.addColorStop(0.32, params.colorCore);
-    coreGrad.addColorStop(0.78, params.colorMid);
-    coreGrad.addColorStop(1.0, params.colorGlow);
+    coreGrad.addColorStop(0.22, '#ffffff');
+    coreGrad.addColorStop(0.42, params.colorInnerGlow);
+    coreGrad.addColorStop(0.76, params.colorMid);
+    coreGrad.addColorStop(0.96, params.colorEdge);
+    coreGrad.addColorStop(1.0, params.colorInnerGlow);
 
     this.ctx.fillStyle = coreGrad;
-    this.ctx.shadowBlur = 18 + this.audioLevel * 16;
-    this.ctx.shadowColor = params.colorCore;
+    this.ctx.shadowBlur = (16 + this.audioLevel * 14) * params.coreBrightness;
+    this.ctx.shadowColor = params.colorInnerGlow;
     this.ctx.fill();
 
-    // Subtle luminous chromatic edge highlight
-    this.ctx.lineWidth = 1.6;
-    this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.48)';
+    // Delicate translucent luminous rim (thin crystalline energy shell)
+    this.ctx.lineWidth = 1.2;
+    this.ctx.strokeStyle = `rgba(255, 255, 255, ${Math.min(0.85, 0.45 * params.coreBrightness + this.audioLevel * 0.3)})`;
     this.ctx.stroke();
+
+    // Intense high-lumen center spark
+    const sparkRadius = Math.max(3, effectiveRadius * 0.22);
+    const sparkGrad = this.ctx.createRadialGradient(
+      this.centerX + focalShiftX * 0.5,
+      this.centerY + focalShiftY * 0.5,
+      0,
+      this.centerX,
+      this.centerY,
+      sparkRadius
+    );
+    sparkGrad.addColorStop(0, `rgba(255, 255, 255, ${Math.min(1.0, 0.95 * params.coreBrightness)})`);
+    sparkGrad.addColorStop(0.7, 'rgba(255, 255, 255, 0.6)');
+    sparkGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+
+    this.ctx.beginPath();
+    this.ctx.arc(this.centerX, this.centerY, sparkRadius, 0, Math.PI * 2);
+    this.ctx.fillStyle = sparkGrad;
+    this.ctx.fill();
+
+    this.ctx.restore();
+  }
+
+  /**
+   * Gravitational Orbital Particles:
+   * Particles orbit in 3 distinct elliptical tracks with front/back 3D depth cueing.
+   * Thinking state accelerates orbit velocity and tightens the track.
+   */
+  drawParticles(dt, isBackHalf) {
+    const params = this.currentParams;
+    const isThinking = this.targetState === 'thinking' || this.currentState === 'thinking';
+
+    this.ctx.save();
+
+    for (const p of this.particles) {
+      // Accelerate orbit in thinking state or on audio response
+      const speedMultiplier = params.particleSpeed * (isThinking ? 1.6 : 1.0) * (1.0 + this.audioLevel * 1.5);
+      p.angle += p.speed * speedMultiplier;
+
+      // Elliptical coordinate projection
+      const sinA = Math.sin(p.angle);
+      const cosA = Math.cos(p.angle);
+
+      // Distinguish front half from back half for 3D occlusion
+      const inBack = sinA < 0;
+      if (inBack !== isBackHalf) continue;
+
+      // Gravitational pull: tracks tighten during thinking
+      const trackDist = params.particleTrackRadius + (p.lane * 11) + Math.sin(this.time * 2.0 + p.pulseOffset) * 2.5;
+      const px = this.centerX + cosA * trackDist;
+      const py = this.centerY + sinA * (trackDist * p.tilt);
+
+      // Depth modulation: front particles are brighter and slightly larger
+      const depthAlpha = inBack ? 0.35 : 0.85;
+      const alpha = depthAlpha * (0.6 + Math.sin(this.time * 3.5 + p.pulseOffset) * 0.4);
+      const size = inBack ? p.size * 0.75 : p.size * (1.0 + this.audioLevel * 0.4);
+
+      this.ctx.beginPath();
+      this.ctx.arc(px, py, Math.max(0.6, size), 0, Math.PI * 2);
+      this.ctx.fillStyle = `rgba(255, 255, 255, ${Math.max(0, Math.min(1, alpha)).toFixed(2)})`;
+      this.ctx.shadowBlur = inBack ? 2 : 6;
+      this.ctx.shadowColor = params.colorInnerGlow;
+      this.ctx.fill();
+    }
 
     this.ctx.restore();
   }
 }
 
-// Attach to window global for bulletproof execution in non-module environments
+// Attach to window global
 if (typeof window !== 'undefined') {
   window.ByteLivingOrb = ByteLivingOrb;
 }

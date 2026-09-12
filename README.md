@@ -1,19 +1,53 @@
 # Byte: Desktop Voice Assistant & AI Companion
 
-**Byte** is a premium, local-first personal desktop AI voice companion and OS automation copilot for Windows built using **Rust (Tauri v2)** and **Vanilla Web Technologies (HTML/CSS/JS)**. It combines local hardware voice processing (Whisper STT and Piper TTS) with flexible local/cloud LLM intelligence (Qwen 3 4B via Ollama / OpenRouter / Nvidia NIM) to execute system actions, control windows, play music, analyze your screen, organize files, and engage in continuous voice conversation.
+**Byte** is a premium, local-first personal desktop AI voice companion and OS automation copilot for Windows built using **Rust (Tauri v2)** and **Vanilla Web Technologies (HTML/CSS/JS Canvas)**. It combines local hardware voice processing (Whisper STT and Piper TTS) with flexible local/cloud LLM intelligence (Qwen 3 4B via Ollama / OpenRouter / Nvidia NIM) to execute system actions, control windows, play music, analyze your screen, organize files, and engage in continuous voice conversation.
 
-> 📖 **Deep-Dive Engineering Guide**: For an exhaustive, step-by-step breakdown of the architecture, sequence diagrams, audio calibration, and tool sandbox, see [ARCHITECTURE_AND_WORKING.md](file:///d:/DevelopmentSide/AI-Studio/byte/ARCHITECTURE_AND_WORKING.md).
+---
+
+## 🔮 Visual Identity: The "Energy Core"
+
+Byte departs from generic circular buttons and amoeba-like biological blobs in favor of a **living quantum energy core**:
+
+> **80% Sphere + 20% Living Energy**  
+> An intelligent floating energy nucleus with a subtle breathing field, conveying machine consciousness and high energy density rather than cellular fluid.
+
+```text
+    Previous Concept (Blob/Amoeba)             Byte Energy Core (AI Nucleus)
+
+             ╭───╮                                      ╭────╮
+          ╭──╯   ╰╮                                   ╭─╯    ╰─╮
+         ╱         ╲                                 │    ◉     │
+        │    ◉      │             ───►               │          │
+         ╲       ╭─╯                                  ╰─╮    ╭─╯
+          ╰──╮───╯                                      ╰────╯
+             ╰╯
+       Organic / Irregular                      Near-Spherical & Breathing
+```
+
+### Visual Engineering Highlights
+- **Near-Spherical Geometry (90–95% Circular)**: Subtly deformed perimeter ($\pm 3\text{--}6\%$ of base radius) avoiding both sterile static circles and uncontrolled amoebic bulges.
+- **8–12 Harmonic Micro-Waves**: High-harmonic perimeter wave synthesis produces a silky, continuous breathing shimmer.
+- **Radiant Intelligence Nucleus**: An intense high-lumen pure white core (`#ffffff`) surrounded by concentrated violet/cyan/emerald energy, communicating active AI cognition.
+- **Dual-Layer Atmospheric Aura**: Inner corona tightly hugs the nucleus while an independent outer ethereal aura breathes and pulses with presence state changes.
+- **Gravitational Orbital Particles**: Ambient embers travel in 3 distinct elliptical planetary tracks with front/back 3D depth occlusion rather than random debris.
+- **State-Driven Physical Behavior**:
+  - **Idle**: Smooth circular silhouette, gentle 3-second breathing pulse, calm celestial blue/violet aura.
+  - **Listening**: Real-time microphone RMS audio reactivity producing subtle acoustic micro-ripples across the surface.
+  - **Thinking**: Core contracts and densifies; radiant white center intensifies; a focused perimeter traveling wave sweeps around; the outer aura expands in a rhythmic 1.5-second cognitive pulse; and orbital particles accelerate in tighter tracks.
+  - **Speaking**: Aura expands outward rhythmically with voice synthesis; surface ripples with warm radiant energy.
+  - **Cancelled**: Smooth contraction and gentle settling back to idle.
+- **High-DPI Razor Sharpness**: Automatic scaling across 4K, 125%, 150%, and 175% Windows desktop display scaling.
 
 ---
 
 ## Key Features
 
 ### 🎙️ Conversational Voice Pipeline
-- **Local STT (Speech-to-Text)**: Automatically transcribes voice queries using a local `whisper-cli.exe` running the high-performance `ggml-tiny.en.bin` model (~200ms latency).
+- **Local STT (Speech-to-Text)**: Automatically transcribes voice queries using local `whisper-cli.exe` running the high-performance `ggml-tiny.en.bin` model (~200ms latency).
 - **Local TTS (Text-to-Speech)**: Plays natural spoken answers using `piper.exe` with standard high-quality `.onnx` voices (`en_US-lessac-medium.onnx`).
 - **Room-Noise Calibrated VAD**: Automatically calibrates ambient sound (200ms) and detects speech termination (1.5s trailing silence), ending recordings hands-free.
-- **Auto-Listen Followup**: Triggers the microphone automatically after non-destructive responses, enabling natural back-and-forth dialogue.
-- **Dynamic Mood & Presence**: Emits mood tags (`[MOOD: energetic/calm/thoughtful/apologetic]`) that dynamically shift the visual shader glow of the floating Byte Orb and adapt speech pacing.
+- **Continuous Auto-Listen Followup**: Triggers the microphone automatically after non-destructive responses, enabling natural back-and-forth dialogue.
+- **Immediate Voice Pre-emption**: Stop commands (*"stop"*, *"cancel"*, *"be quiet"*, *"shut up"*) immediately cancel active LLM streams, flush audio sinks, and dismiss operations.
 
 ### 🛠️ Advanced Desktop Tools & OS Bridge
 Byte safely mediates system actions through strongly typed Rust tool handlers:
@@ -33,8 +67,8 @@ Byte safely mediates system actions through strongly typed Rust tool handlers:
 
 ## Tech Stack
 
-- **Frontend**: HTML5, Vanilla CSS3 (Glassmorphic Orb, Glow Shaders), Vanilla JavaScript, Tauri Event API.
-- **Backend**: Rust (Tauri v2, Tokio async runtime, CPAL audio capture, Hound, Rodio, Image).
+- **Frontend**: HTML5, Vanilla CSS3 (Glassmorphic Floating Widget), Vanilla JavaScript 60+ FPS Canvas Engine (`ByteLivingOrb`), Tauri Event API.
+- **Backend**: Rust (Tauri v2, Tokio async runtime, CPAL audio capture, Hound, Rodio, Image, Windows Win32 / WMI API).
 - **Speech-to-Text**: Whisper.cpp (`whisper-cli.exe` + `ggml-tiny.en.bin`).
 - **Text-to-Speech**: Piper TTS (`piper.exe` + `en_US-lessac-medium.onnx`).
 - **LLM Engine**: Local Ollama (`qwen3-4b:latest`) / OpenRouter / Nvidia NIM Vision.
@@ -62,9 +96,7 @@ Byte safely mediates system actions through strongly typed Rust tool handlers:
 
 2. Or run via Tauri CLI:
    ```bash
-   npm install
-   npm run tauri dev
+   cargo tauri dev
    ```
 
-3. Toggle Byte anytime using the global hotkey: **`Ctrl + B`**.
-
+3. Toggle Byte presence anytime using the global hotkey: **`Ctrl + B`** or click the floating orb.
