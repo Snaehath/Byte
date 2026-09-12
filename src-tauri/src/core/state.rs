@@ -40,6 +40,14 @@ impl ConversationIntent {
     }
 }
 
+/// Strict pipeline stage timeout constants (seconds)
+pub const CAPTURE_TIMEOUT_SECS: u64 = 15;
+pub const STT_TIMEOUT_SECS: u64 = 10;
+pub const LLM_TIMEOUT_SECS: u64 = 30;
+pub const TOOL_TIMEOUT_SECS: u64 = 20;
+pub const TTS_SYNTH_TIMEOUT_SECS: u64 = 12;
+pub const TTS_PLAY_TIMEOUT_SECS: u64 = 25;
+
 /// Resolves the conversation intent based on user transcription, assistant response, and tool state.
 pub fn resolve_conversation_intent(
     transcription: &str,

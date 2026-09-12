@@ -98,6 +98,19 @@ pub fn run() {
                 )?;
             }
 
+            // Silently verify subsystem health on startup (Whisper, Piper, Ollama, Mic)
+            let http_client = app.state::<AppState>().http_client.clone();
+            tauri::async_runtime::spawn(async move {
+                let report = crate::diagnostics::HealthChecker::check_system(&http_client).await;
+                log::info!("=== Byte Subsystem Startup Health ===");
+                log::info!("Microphone:     {} ({})", if report.microphone.available { "✓" } else { "✗" }, report.microphone.details);
+                log::info!("Whisper STT:    {} ({})", if report.whisper_binary.available && report.whisper_model.available { "✓" } else { "✗" }, report.whisper_binary.details);
+                log::info!("Piper TTS:      {} ({})", if report.piper_binary.available && report.piper_model.available { "✓" } else { "✗" }, report.piper_binary.details);
+                log::info!("Ollama Service: {} ({})", if report.ollama_service.available { "✓" } else { "✗" }, report.ollama_service.details);
+                log::info!("Overall Ready:  {}", if report.overall_status { "YES ✓" } else { "DEGRADED ⚠️" });
+                log::info!("=====================================");
+            });
+
             // Spawn proactive background cognitive loop for scheduled reminders
             let app_handle_for_loop = app.handle().clone();
             let memory_for_loop = Arc::clone(&memory_clone);

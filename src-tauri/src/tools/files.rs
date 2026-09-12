@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::process::Command;
-use crate::tools::{DesktopTool, ToolFuture};
+use crate::tools::{DesktopTool, ToolFuture, ToolRiskLevel};
 
 pub struct OpenFolderTool;
 
@@ -53,6 +53,7 @@ impl DesktopTool for OrganizeFolderTool {
     fn name(&self) -> &str { "organize_folder" }
     fn description(&self) -> &str { "Organize files in a directory into sorted subfolders by category." }
     fn parameter_schema(&self) -> &str { "{\"path\": \"directory path to organize (default: Downloads)\"}" }
+    fn risk_level(&self) -> ToolRiskLevel { ToolRiskLevel::Destructive }
     fn requires_confirmation(&self) -> bool { true }
 
     fn execute<'a>(

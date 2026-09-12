@@ -7,7 +7,10 @@ use crate::ai::{Capability, ModelManager};
 use crate::ai::llm::{ChatMessage, LlmResult};
 use crate::tools;
 use crate::prompts;
-use crate::core::{AssistantResponse, resolve_conversation_intent, InteractionContext};
+use crate::core::{
+    AssistantResponse, resolve_conversation_intent, InteractionContext, ByteError,
+    STT_TIMEOUT_SECS, LLM_TIMEOUT_SECS, TOOL_TIMEOUT_SECS, TTS_SYNTH_TIMEOUT_SECS, TTS_PLAY_TIMEOUT_SECS,
+};
 use crate::diagnostics::{PipelineTelemetry, StageTimer};
 use crate::platform::get_active_window_title;
 use crate::config::paths::BytePaths;
@@ -111,6 +114,17 @@ fn sanitize_conversation_history(history: &[crate::memory::ConversationTurn]) ->
 // Re-export is_simple_greeting from prompts module
 pub use crate::prompts::is_simple_greeting;
 
+/// Determines whether transcription is empty, ambient noise, or a bracketed non-verbal artifact
+pub fn is_empty_or_noise(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+    (trimmed.starts_with('(') && trimmed.ends_with(')'))
+        || (trimmed.starts_with('[') && trimmed.ends_with(']'))
+        || trimmed.chars().all(|c| !c.is_alphanumeric())
+}
+
 /// Active conversation lifecycle loop (Listen -> Auto-stop on silence -> Transcribe -> Query -> Play TTS)
 #[tauri::command]
 pub async fn start_interaction(state: State<'_, AppState>, window: tauri::WebviewWindow) -> Result<ProcessResult, String> {
@@ -191,14 +205,60 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
     let temp_wav = BytePaths::temp_wav();
     audio::save_wav(&temp_wav, &resampled).map_err(|e| format!("Failed to save WAV: {}", e))?;
 
-    // Transcribe speech using SpeechService (Whisper STT)
-    let speech_service = SpeechService::default();
+    // Transcribe speech using SpeechService (Whisper STT) with stage timeout and cancellation
     log::info!("Starting Whisper transcription...");
     let whisper_timer = StageTimer::start();
-    let transcription = speech_service.transcribe(&temp_wav)?;
-    telemetry.stt_ms = whisper_timer.elapsed_ms();
-    log::info!("Whisper transcription finished in {}ms: '{}'", telemetry.stt_ms, transcription);
+    let wav_for_transcribe = temp_wav.clone();
+    let transcribe_task = tokio::task::spawn_blocking(move || {
+        let speech = SpeechService::default();
+        speech.transcribe(&wav_for_transcribe)
+    });
+
+    let cancel_stt = context.cancellation.cancelled();
+    let transcription_res: Result<String, ByteError> = tokio::select! {
+        res = tokio::time::timeout(std::time::Duration::from_secs(STT_TIMEOUT_SECS), transcribe_task) => {
+            match res {
+                Ok(join_res) => match join_res {
+                    Ok(trans_res) => trans_res.map_err(ByteError::TranscriptionFailed),
+                    Err(e) => Err(ByteError::TranscriptionFailed(format!("Transcription task join error: {}", e))),
+                },
+                Err(_) => Err(ByteError::Timeout { stage: "transcription".to_string(), duration_ms: STT_TIMEOUT_SECS * 1000 }),
+            }
+        }
+        _ = cancel_stt => {
+            let _ = std::fs::remove_file(&temp_wav);
+            log::info!("Interaction {} cancelled during STT transcription.", context.id);
+            state.presence.set_state(&window, PresenceState::Cancelled);
+            state.is_interacting.store(false, Ordering::SeqCst);
+            return Ok(ProcessResult {
+                transcription: String::new(),
+                thinking: String::new(),
+                response: "Cancelled.".to_string(),
+                auto_listen: false,
+            });
+        }
+    };
     let _ = std::fs::remove_file(&temp_wav);
+    telemetry.stt_ms = whisper_timer.elapsed_ms();
+
+    let transcription = match transcription_res {
+        Ok(t) => {
+            log::info!("Whisper transcription finished in {}ms: '{}'", telemetry.stt_ms, t);
+            t
+        }
+        Err(err) => {
+            log::error!("STT stage error: {}", err);
+            let friendly = err.to_user_friendly_message();
+            state.presence.set_state(&window, PresenceState::Idle);
+            state.is_interacting.store(false, Ordering::SeqCst);
+            return Ok(ProcessResult {
+                transcription: String::new(),
+                thinking: String::new(),
+                response: friendly,
+                auto_listen: false,
+            });
+        }
+    };
 
     if context.is_cancelled() {
         log::info!("Interaction {} cancelled after STT transcription.", context.id);
@@ -245,12 +305,7 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
         });
     }
 
-    let trimmed = transcription.trim();
-    let is_noise = (trimmed.starts_with('(') && trimmed.ends_with(')'))
-        || (trimmed.starts_with('[') && trimmed.ends_with(']'))
-        || trimmed.chars().all(|c| !c.is_alphabetic());
-
-    if trimmed.is_empty() || is_noise {
+    if is_empty_or_noise(&transcription) {
         log::info!("Whisper transcription is empty or ambient noise: '{}'", transcription);
         state.presence.set_state(&window, PresenceState::Idle);
         state.is_interacting.store(false, Ordering::SeqCst);
@@ -289,11 +344,18 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
             log::info!("User confirmed pending tool execution: {:?}", pending_call);
             let registry = tools::ToolRegistry::new();
             let tool_exec_timer = StageTimer::start();
-            let execute_result = match registry.execute_tool(&pending_call, &window, &state.http_client, &transcription, &state).await {
-                Ok(output) => output,
-                Err(e) => {
+            let execute_result = match tokio::time::timeout(
+                std::time::Duration::from_secs(TOOL_TIMEOUT_SECS),
+                registry.execute_tool(&pending_call, &window, &state.http_client, &transcription, &state, true)
+            ).await {
+                Ok(Ok(output)) => output,
+                Ok(Err(e)) => {
                     log::error!("Pending tool execution error: {}", e);
-                    format!("I failed to perform that action: {}", e)
+                    ByteError::ToolExecutionFailed { tool: pending_call.tool.clone(), error: e }.to_user_friendly_message()
+                }
+                Err(_) => {
+                    log::warn!("Pending tool execution timed out after {}s", TOOL_TIMEOUT_SECS);
+                    ByteError::Timeout { stage: format!("tool '{}'", pending_call.tool), duration_ms: TOOL_TIMEOUT_SECS * 1000 }.to_user_friendly_message()
                 }
             };
             telemetry.tool_ms = tool_exec_timer.elapsed_ms();
@@ -367,7 +429,7 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
         let llm_timer = StageTimer::start();
         let messages_debug = serde_json::to_string_pretty(&messages)
             .unwrap_or_else(|_| "<failed to serialize messages>".to_string());
-        log::info!("LLM prompt messages payload:\n{}", messages_debug);
+        log::debug!("LLM prompt messages payload:\n{}", messages_debug);
         log::info!("Interaction: Querying local model manager with native tools...");
 
     let cancel_llm = context.cancellation.cancelled();
@@ -379,12 +441,29 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
     );
 
     let llm_result = tokio::select! {
-        res = llm_fut => {
+        res = tokio::time::timeout(std::time::Duration::from_secs(LLM_TIMEOUT_SECS), llm_fut) => {
             match res {
-                Ok(r) => r,
-                Err(err_msg) => {
-                    log::error!("Interaction model error: {}", err_msg);
-                    final_response = "I'm having trouble reaching my local AI provider. Please make sure Ollama is running.".to_string();
+                Ok(call_res) => match call_res {
+                    Ok(r) => r,
+                    Err(err_msg) => {
+                        log::error!("Interaction model error: {}", err_msg);
+                        let byte_err = if err_msg.contains("Connection refused") || err_msg.contains("error sending request") {
+                            ByteError::ModelUnreachable(err_msg)
+                        } else {
+                            ByteError::ModelError(err_msg)
+                        };
+                        final_response = byte_err.to_user_friendly_message();
+                        has_error = true;
+                        LlmResult {
+                            content: String::new(),
+                            tool_call: None,
+                        }
+                    }
+                },
+                Err(_) => {
+                    log::warn!("LLM query timed out after {}s", LLM_TIMEOUT_SECS);
+                    let byte_err = ByteError::Timeout { stage: "AI generation".to_string(), duration_ms: LLM_TIMEOUT_SECS * 1000 };
+                    final_response = byte_err.to_user_friendly_message();
                     has_error = true;
                     LlmResult {
                         content: String::new(),
@@ -454,16 +533,26 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
                 }
                 final_response = format!("I need your confirmation to execute '{}'. Would you like me to proceed?", display_name);
             } else {
-                executed_tool_name = Some(display_name);
+                executed_tool_name = Some(display_name.clone());
                 let tool_exec_timer = StageTimer::start();
-                match registry.execute_tool(&tool_call, &window, &state.http_client, &transcription, &state).await {
-                    Ok(tool_output) => {
+                let tool_res = tokio::time::timeout(
+                    std::time::Duration::from_secs(TOOL_TIMEOUT_SECS),
+                    registry.execute_tool(&tool_call, &window, &state.http_client, &transcription, &state, false)
+                ).await;
+
+                match tool_res {
+                    Ok(Ok(tool_output)) => {
                         log::info!("Tool success: {}", tool_output);
                         final_response = tool_output;
                     }
-                    Err(e) => {
+                    Ok(Err(e)) => {
                         log::error!("Tool error: {}", e);
-                        final_response = format!("I encountered an issue: {}", e);
+                        final_response = ByteError::ToolExecutionFailed { tool: display_name, error: e }.to_user_friendly_message();
+                        has_error = true;
+                    }
+                    Err(_) => {
+                        log::warn!("Tool execution timed out after {}s", TOOL_TIMEOUT_SECS);
+                        final_response = ByteError::Timeout { stage: format!("tool '{}'", display_name), duration_ms: TOOL_TIMEOUT_SECS * 1000 }.to_user_friendly_message();
                         has_error = true;
                     }
                 }
@@ -552,10 +641,16 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
     });
 
     let wav_path_res = tokio::select! {
-        res = synth_task => {
+        res = tokio::time::timeout(std::time::Duration::from_secs(TTS_SYNTH_TIMEOUT_SECS), synth_task) => {
             match res {
-                Ok(r) => r,
-                Err(e) => Err(format!("TTS task join error: {}", e)),
+                Ok(join_res) => match join_res {
+                    Ok(r) => r.map_err(ByteError::SynthesisFailed),
+                    Err(e) => Err(ByteError::SynthesisFailed(format!("TTS task join error: {}", e))),
+                },
+                Err(_) => {
+                    log::warn!("TTS synthesis timed out after {}s", TTS_SYNTH_TIMEOUT_SECS);
+                    Err(ByteError::Timeout { stage: "speech synthesis".to_string(), duration_ms: TTS_SYNTH_TIMEOUT_SECS * 1000 })
+                }
             }
         }
         _ = cancel_synth => {
@@ -609,7 +704,12 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
         });
 
         tokio::select! {
-            _ = play_task => {}
+            res = tokio::time::timeout(std::time::Duration::from_secs(TTS_PLAY_TIMEOUT_SECS), play_task) => {
+                if res.is_err() {
+                    log::warn!("TTS playback exceeded timeout of {}s; stopping audio.", TTS_PLAY_TIMEOUT_SECS);
+                    audio::stop_audio();
+                }
+            }
             _ = cancel_play => {
                 log::info!("Interaction {} cancelled during audio playback.", context.id);
                 state.presence.set_state(&window, PresenceState::Cancelled);
@@ -724,5 +824,43 @@ mod tests {
         assert_eq!(sanitized.len(), 2);
         assert_eq!(sanitized[0].content, "First query");
         assert_eq!(sanitized[1].role, "assistant");
+    }
+
+    #[test]
+    fn test_byte_error_friendly_messages() {
+        let unreachable_err = ByteError::ModelUnreachable("Connection refused (os error 10061)".to_string());
+        assert!(unreachable_err.to_user_friendly_message().contains("Ollama is running"));
+
+        let timeout_err = ByteError::Timeout { stage: "transcription".to_string(), duration_ms: 10000 };
+        assert!(timeout_err.to_user_friendly_message().contains("timed out"));
+
+        let tool_err = ByteError::ToolExecutionFailed {
+            tool: "organize_folder".to_string(),
+            error: "Permission denied".to_string(),
+        };
+        assert!(tool_err.to_user_friendly_message().contains("organize_folder"));
+    }
+
+    #[test]
+    fn test_is_empty_or_noise() {
+        // Noise and empty strings must return true
+        assert!(is_empty_or_noise(""));
+        assert!(is_empty_or_noise("   "));
+        assert!(is_empty_or_noise("\n\t  "));
+        assert!(is_empty_or_noise("[BLANK_AUDIO]"));
+        assert!(is_empty_or_noise("[silence]"));
+        assert!(is_empty_or_noise("(sigh)"));
+        assert!(is_empty_or_noise("(cough)"));
+        assert!(is_empty_or_noise("..."));
+        assert!(is_empty_or_noise("???"));
+        assert!(is_empty_or_noise("---"));
+        assert!(is_empty_or_noise(" . . . "));
+
+        // Substantive speech must return false
+        assert!(!is_empty_or_noise("Hello"));
+        assert!(!is_empty_or_noise("What is my CPU usage?"));
+        assert!(!is_empty_or_noise("Open Chrome"));
+        assert!(!is_empty_or_noise("yes"));
+        assert!(!is_empty_or_noise("123"));
     }
 }
