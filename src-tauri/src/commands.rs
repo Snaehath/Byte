@@ -25,6 +25,45 @@ pub struct ProcessResult {
     pub auto_listen: bool,
 }
 
+#[derive(PartialEq, Eq)]
+enum ConfirmationIntent {
+    Confirm,
+    Cancel,
+    Unclear,
+}
+
+fn confirmation_intent(transcription: &str) -> ConfirmationIntent {
+    let lower = transcription.to_lowercase().replace('\'', "").replace('’', "");
+    let normalized = lower
+        .chars()
+        .map(|ch| if ch.is_alphanumeric() { ch } else { ' ' })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    // A refusal anywhere in the response takes precedence over agreement.
+    let words: Vec<&str> = normalized.split_whitespace().collect();
+    let has_refusal = words.iter().any(|word| {
+        matches!(*word, "no" | "cancel" | "stop" | "never" | "not" | "dont" | "cant" | "cannot")
+    }) || normalized.contains("do not");
+    if has_refusal {
+        return ConfirmationIntent::Cancel;
+    }
+
+    // Accept only short, unambiguous responses. Longer phrases are treated as
+    // a new request, so incidental words like "yes" cannot approve an action.
+    if matches!(
+        normalized.as_str(),
+        "yes" | "yes please" | "sure" | "sure thing" | "confirm" | "confirmed"
+            | "go ahead" | "do it" | "okay" | "ok"
+    ) {
+        ConfirmationIntent::Confirm
+    } else {
+        ConfirmationIntent::Unclear
+    }
+}
+
 #[tauri::command]
 pub fn stop_action(state: State<'_, AppState>, app_handle: tauri::AppHandle) -> Result<(), String> {
     // 1. Cancel and take the active interaction context if present (idempotent)
@@ -50,6 +89,20 @@ pub fn stop_action(state: State<'_, AppState>, app_handle: tauri::AppHandle) -> 
 #[tauri::command]
 pub fn reposition_presence(window: tauri::WebviewWindow) -> Result<(), String> {
     crate::presence::PlacementEngine::position_window(&window, crate::presence::Anchor::BottomRight)
+}
+
+#[tauri::command]
+pub fn get_wake_word_enabled(state: State<'_, AppState>) -> bool {
+    state.wake_word_enabled.load(Ordering::SeqCst)
+}
+
+#[tauri::command]
+pub fn set_wake_word_enabled(state: State<'_, AppState>, enabled: bool) -> Result<bool, String> {
+    let mut config = crate::config::AppConfig::load();
+    config.wake_word_enabled = enabled;
+    config.save()?;
+    state.wake_word_enabled.store(enabled, Ordering::SeqCst);
+    Ok(enabled)
 }
 
 #[tauri::command]
@@ -331,16 +384,8 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
     };
 
     if let Some(pending_call) = pending_call_opt {
-        let is_confirmed = {
-            let lower = transcription.to_lowercase();
-            lower.contains("yes") || lower.contains("sure") || lower.contains("confirm") || lower.contains("go ahead") || lower.contains("do it") || lower.contains("ok") || lower.contains("okay")
-        };
-        let is_cancelled = {
-            let lower = transcription.to_lowercase();
-            lower.contains("no") || lower.contains("cancel") || lower.contains("stop") || lower.contains("never") || lower.contains("don't")
-        };
-
-        if is_confirmed {
+        match confirmation_intent(&transcription) {
+        ConfirmationIntent::Confirm => {
             log::info!("User confirmed pending tool execution: {:?}", pending_call);
             let registry = tools::ToolRegistry::new();
             let tool_exec_timer = StageTimer::start();
@@ -363,13 +408,16 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
             final_response = execute_result;
             is_tool = true;
             executed_tool_name = Some(pending_call.tool.clone());
-        } else if is_cancelled {
+        }
+        ConfirmationIntent::Cancel => {
             log::info!("User cancelled pending tool execution.");
             let _ = state.pending_tool_transcription.lock().unwrap().take();
             final_response = "Okay, cancelled.".to_string();
-        } else {
+        }
+        ConfirmationIntent::Unclear => {
             let _ = state.pending_tool_transcription.lock().unwrap().take();
             log::info!("User sent new command instead of confirming: {}", transcription);
+        }
         }
     }
 

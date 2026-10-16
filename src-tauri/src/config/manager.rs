@@ -3,9 +3,11 @@ use std::path::PathBuf;
 use crate::config::paths::BytePaths;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(default)]
 pub struct LlmConfig {
     pub ollama_url: String,        // default "http://localhost:11434/v1/chat/completions"
     pub ollama_model: String,      // default "granite4.2:3b"
+    pub vision_model: String,
     pub reasoning_effort: String,  // "low" for Granite fast answering
     pub temperature: f32,
     pub max_tokens: u32,
@@ -16,6 +18,7 @@ impl Default for LlmConfig {
         Self {
             ollama_url: "http://localhost:11434/v1/chat/completions".to_string(),
             ollama_model: "granite4.2:3b".to_string(),
+            vision_model: "llava".to_string(),
             reasoning_effort: "low".to_string(),
             temperature: 0.2,
             max_tokens: 1024,
@@ -42,10 +45,24 @@ impl Default for AudioConfig {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(default)]
 pub struct AppConfig {
     pub llm: LlmConfig,
     pub audio: AudioConfig,
+    pub wake_word_enabled: bool,
+    pub first_run_greeting_enabled: bool,
+}
+
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self {
+            llm: LlmConfig::default(),
+            audio: AudioConfig::default(),
+            wake_word_enabled: true,
+            first_run_greeting_enabled: false,
+        }
+    }
 }
 
 impl AppConfig {

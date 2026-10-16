@@ -125,10 +125,14 @@ pub fn start_recording(state: &AppState, window: tauri::WebviewWindow) -> Result
 pub fn start_wake_word_detector(
     is_recording: Arc<std::sync::atomic::AtomicBool>,
     is_interacting: Arc<std::sync::atomic::AtomicBool>,
+    wake_word_enabled: Arc<std::sync::atomic::AtomicBool>,
     app_handle: tauri::AppHandle,
 ) {
     std::thread::spawn(move || {
         log::info!("Background wake word detector thread started.");
+        while !wake_word_enabled.load(Ordering::SeqCst) {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        }
         let host = cpal::default_host();
         let device = match host.default_input_device() {
             Some(d) => d,
@@ -152,12 +156,16 @@ pub fn start_wake_word_detector(
         let audio_buffer_clone = Arc::clone(&audio_buffer);
         let is_rec = Arc::clone(&is_recording);
         let is_int = Arc::clone(&is_interacting);
+        let wake_enabled = Arc::clone(&wake_word_enabled);
 
         let stream_config: cpal::StreamConfig = config.clone().into();
         let stream = match device.build_input_stream(
             &stream_config,
             move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                if is_rec.load(Ordering::SeqCst) || is_int.load(Ordering::SeqCst) {
+                if !wake_enabled.load(Ordering::SeqCst)
+                    || is_rec.load(Ordering::SeqCst)
+                    || is_int.load(Ordering::SeqCst)
+                {
                     return;
                 }
                 if let Ok(mut buf) = audio_buffer_clone.lock() {
@@ -184,11 +192,39 @@ pub fn start_wake_word_detector(
             }
         };
 
-        let _ = stream.play();
+        let mut detector_paused = false;
+        if wake_word_enabled.load(Ordering::SeqCst) {
+            let _ = stream.play();
+        } else {
+            let _ = stream.pause();
+            detector_paused = true;
+        }
 
         loop {
+            if !wake_word_enabled.load(Ordering::SeqCst) {
+                if !detector_paused {
+                    let _ = stream.pause();
+                    detector_paused = true;
+                }
+                if let Ok(mut buf) = audio_buffer.lock() {
+                    buf.clear();
+                }
+                std::thread::sleep(std::time::Duration::from_millis(250));
+                continue;
+            }
+            if detector_paused {
+                if let Err(e) = stream.play() {
+                    log::error!("Wake detector failed to resume: {}", e);
+                    std::thread::sleep(std::time::Duration::from_millis(1000));
+                    continue;
+                }
+                detector_paused = false;
+            }
             std::thread::sleep(std::time::Duration::from_millis(1500));
-            if is_recording.load(Ordering::SeqCst) || is_interacting.load(Ordering::SeqCst) {
+            if !wake_word_enabled.load(Ordering::SeqCst)
+                || is_recording.load(Ordering::SeqCst)
+                || is_interacting.load(Ordering::SeqCst)
+            {
                 continue;
             }
 
@@ -218,7 +254,12 @@ pub fn start_wake_word_detector(
                     use crate::audio::stt::SpeechToText;
                     if let Ok(text) = whisper.transcribe(&temp_path) {
                         let clean = text.to_lowercase();
-                        if clean.contains("byte") || clean.contains("hey byte") || clean.contains("bight") || clean.contains("hi byte") {
+                        if wake_word_enabled.load(Ordering::SeqCst)
+                            && (clean.contains("byte")
+                                || clean.contains("hey byte")
+                                || clean.contains("bight")
+                                || clean.contains("hi byte"))
+                        {
                             log::info!("Wake word verified: '{}'!", text);
                             let _ = app_handle.emit("wakeup", ());
                         }

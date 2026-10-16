@@ -38,6 +38,7 @@ pub struct AppState {
     pub recorded_data: Arc<Mutex<Vec<f32>>>,
     pub device_sample_rate: Mutex<u32>,
     pub is_interacting: Arc<AtomicBool>,
+    pub wake_word_enabled: Arc<AtomicBool>,
     pub http_client: reqwest::Client,
     pub memory: Arc<Mutex<ByteMemory>>,
     pub mood: Arc<Mutex<String>>,
@@ -60,6 +61,10 @@ pub fn run() {
     let memory = Arc::new(Mutex::new(ByteMemory::load()));
     let memory_clone = Arc::clone(&memory);
     let mood = Arc::new(Mutex::new("calm".to_string()));
+    let startup_config = crate::config::AppConfig::load();
+    let wake_word_enabled = Arc::new(AtomicBool::new(startup_config.wake_word_enabled));
+    let first_run_greeting_enabled = startup_config.first_run_greeting_enabled;
+    let wake_word_enabled_for_detector = Arc::clone(&wake_word_enabled);
 
     tauri::Builder::default()
         .manage(AppState {
@@ -67,6 +72,7 @@ pub fn run() {
             recorded_data: Arc::new(Mutex::new(Vec::new())),
             device_sample_rate: Mutex::new(0),
             is_interacting: is_interacting_clone,
+            wake_word_enabled: Arc::clone(&wake_word_enabled),
             http_client: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(90))
                 .build()
@@ -82,7 +88,9 @@ pub fn run() {
             commands::start_interaction,
             commands::stop_action,
             commands::get_system_health,
-            commands::reposition_presence
+            commands::reposition_presence,
+            commands::get_wake_word_enabled,
+            commands::set_wake_word_enabled
         ])
         .setup(move |app| {
             // Position presence window above taskbar on bottom-right of active/primary monitor
@@ -188,16 +196,21 @@ pub fn run() {
 
             // Start background voice wake word detector
             let app_handle_for_wake = app.handle().clone();
-            audio::start_wake_word_detector(is_recording_for_wake, is_interacting_for_wake, app_handle_for_wake);
+            audio::start_wake_word_detector(
+                is_recording_for_wake,
+                is_interacting_for_wake,
+                wake_word_enabled_for_detector,
+                app_handle_for_wake,
+            );
 
-            // Greet on first run only
+            // Speak a first-run greeting only when explicitly enabled in config.
             let memory_for_hello = Arc::clone(&memory_clone);
             std::thread::spawn(move || {
                 std::thread::sleep(std::time::Duration::from_millis(1000));
                 let mut should_greet = false;
                 if let Ok(mut mem) = memory_for_hello.lock() {
                     if mem.is_first_run {
-                        should_greet = true;
+                        should_greet = first_run_greeting_enabled;
                         mem.is_first_run = false;
                         let _ = mem.save();
                     }

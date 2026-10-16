@@ -18,6 +18,7 @@ const statusText = document.getElementById('status-text');
 const statusBadge = document.querySelector('.status-badge');
 const presenceWidget = document.querySelector('.presence-widget');
 const talkButton = document.getElementById('talk-button');
+const wakeToggle = document.getElementById('wake-toggle');
 
 let isRunning = false;
 let statusResetTimer = null;
@@ -65,6 +66,41 @@ function updateStatusBadge(state) {
   }
   presenceWidget.classList.remove('hidden');
 }
+
+function updateWakeToggle(enabled) {
+  wakeToggle.textContent = `Wake word: ${enabled ? 'On' : 'Off'}`;
+  wakeToggle.setAttribute('aria-pressed', String(enabled));
+  wakeToggle.setAttribute('aria-busy', 'false');
+  wakeToggle.setAttribute(
+    'aria-label',
+    `Wake word detection is ${enabled ? 'on' : 'off'}. Click to turn it ${enabled ? 'off' : 'on'}.`
+  );
+  wakeToggle.title = `Click to turn wake word detection ${enabled ? 'off' : 'on'}`;
+}
+
+wakeToggle.addEventListener('click', async () => {
+  const enabled = wakeToggle.getAttribute('aria-pressed') !== 'true';
+  wakeToggle.disabled = true;
+  try {
+    updateWakeToggle(await invoke('set_wake_word_enabled', { enabled }));
+  } catch (err) {
+    console.error('Failed to change wake word setting:', err);
+    wakeToggle.textContent = 'Wake word: Error';
+  } finally {
+    wakeToggle.disabled = false;
+  }
+});
+
+invoke('get_wake_word_enabled')
+  .then((enabled) => {
+    updateWakeToggle(enabled);
+    wakeToggle.disabled = false;
+  })
+  .catch((err) => {
+    console.error('Failed to load wake word setting:', err);
+    wakeToggle.textContent = 'Wake word: Unavailable';
+    wakeToggle.disabled = true;
+  });
 
 // Full conversational lifecycle run
 async function runInteraction() {
@@ -166,14 +202,14 @@ window.addEventListener('keydown', async (event) => {
 });
 
 // Cursor ignore click-through outside orb bounds
-talkButton.addEventListener('mouseenter', async () => {
+presenceWidget.addEventListener('mouseenter', async () => {
   try {
     const { getCurrentWindow } = window.__TAURI__.window;
     await getCurrentWindow().setIgnoreCursorEvents(false);
   } catch (_) {}
 });
 
-talkButton.addEventListener('mouseleave', async () => {
+presenceWidget.addEventListener('mouseleave', async () => {
   try {
     const { getCurrentWindow } = window.__TAURI__.window;
     await getCurrentWindow().setIgnoreCursorEvents(true);

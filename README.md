@@ -13,11 +13,15 @@ Some interactions can continue by listening for another request. The orb and sta
 
 ## AI and speech
 
-Byte's configuration is stored in a JSON file in your Windows user data folder. The default AI configuration uses a local Ollama service. Speech recognition and speech output can use local Whisper and Piper tools. You may need to install these tools and their model files separately; their paths can be set with `BYTE_WHISPER_EXE`, `BYTE_WHISPER_MODEL`, `BYTE_PIPER_EXE`, and `BYTE_PIPER_MODEL`.
+Byte's configuration is stored at `%APPDATA%\Byte\config\config.json`. The default AI configuration uses a local Ollama service. Speech recognition and speech output use local Whisper and Piper tools; install their executables and models separately if they are not already available. Set their paths with `BYTE_WHISPER_EXE`, `BYTE_WHISPER_MODEL`, `BYTE_PIPER_EXE`, and `BYTE_PIPER_MODEL`.
 
 ## Desktop capabilities
 
-Depending on the request and available configuration, Byte can open applications, control windows, organize files, access the clipboard, control audio and media, read system information, show notifications, and analyze the screen. It can also keep selected preferences and conversation history. Some actions ask for confirmation before proceeding.
+Depending on the request and available configuration, Byte can open applications, control windows, organize files, access the clipboard, control audio and media, read system information, show notifications, and analyze the screen. Screen analysis uses the configured Ollama vision model and asks for confirmation before capturing the screen. It can also keep selected preferences and conversation history.
+
+The floating widget includes a **Wake word** switch. When enabled, Byte listens for its wake word in the background; switch it off to pause detection. You can also set `wake_word_enabled` in the config file. The optional first-run spoken greeting is off by default; set `first_run_greeting_enabled` to `true` to enable it before Byte's first launch.
+
+For screen analysis, install a vision model in Ollama (for example, `ollama pull llava`) and set `llm.vision_model` in the config file to that model's name.
 
 ## Project structure
 
