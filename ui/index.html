@@ -12,14 +12,19 @@
   </head>
   <body>
     <div class="presence-widget" data-tauri-drag-region>
-      <!-- Living Audio-Reactive Canvas Orb -->
-      <div class="orb-viewport" data-tauri-drag-region>
-        <canvas id="byte-orb-canvas" width="220" height="175"></canvas>
-      </div>
+      <button
+        class="orb-viewport"
+        id="talk-button"
+        type="button"
+        aria-label="Start talking to Byte"
+        title="Click to talk · Ctrl+B"
+      >
+        <canvas id="byte-orb-canvas" width="220" height="175" aria-hidden="true"></canvas>
+      </button>
 
       <!-- Minimal Ambient Presence Status -->
       <div class="status-badge">
-        <span id="status-text">Click or Ctrl+B</span>
+        <span id="status-text" role="status" aria-live="polite">Click to talk · Ctrl+B</span>
       </div>
     </div>
 

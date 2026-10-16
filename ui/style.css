@@ -46,11 +46,25 @@ html, body {
 .orb-viewport {
   width: 220px;
   height: 175px;
+  padding: 0;
+  border: 0;
+  background: transparent;
   display: flex;
   justify-content: center;
   align-items: center;
   cursor: pointer;
   position: relative;
+  border-radius: 50%;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.orb-viewport:focus-visible {
+  outline: 2px solid rgba(116, 185, 255, 0.85);
+  outline-offset: -8px;
+}
+
+.orb-viewport:active #byte-orb-canvas {
+  transform: scale(0.97);
 }
 
 #byte-orb-canvas {
@@ -59,6 +73,7 @@ html, body {
   display: block;
   pointer-events: auto;
   filter: drop-shadow(0 4px 16px rgba(0, 0, 0, 0.35));
+  transition: transform 0.18s ease;
 }
 
 .status-badge {
@@ -82,6 +97,20 @@ html, body {
   text-align: center;
   display: inline-block;
   transition: color 0.3s ease;
+}
+
+.status-badge.error {
+  border-color: rgba(255, 118, 117, 0.65);
+  box-shadow: 0 0 14px rgba(255, 118, 117, 0.22);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .presence-widget,
+  #byte-orb-canvas,
+  .status-badge,
+  #status-text {
+    transition-duration: 0.01ms;
+  }
 }
 
 .status-badge.listening {

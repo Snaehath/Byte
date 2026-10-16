@@ -17,27 +17,47 @@ try {
 const statusText = document.getElementById('status-text');
 const statusBadge = document.querySelector('.status-badge');
 const presenceWidget = document.querySelector('.presence-widget');
-const orbViewport = document.querySelector('.orb-viewport');
+const talkButton = document.getElementById('talk-button');
 
 let isRunning = false;
+let statusResetTimer = null;
 
 function updateStatusBadge(state) {
+  if (state !== 'error' && statusResetTimer) {
+    clearTimeout(statusResetTimer);
+    statusResetTimer = null;
+  }
   statusBadge.className = `status-badge ${state}`;
   switch (state) {
     case 'idle':
-      statusText.innerText = 'Click or Ctrl+B';
+      statusText.innerText = 'Click to talk · Ctrl+B';
+      talkButton.setAttribute('aria-label', 'Start talking to Byte');
+      talkButton.title = 'Click to talk · Ctrl+B';
       break;
     case 'listening':
-      statusText.innerText = 'Listening...';
+      statusText.innerText = 'Listening · click to stop';
+      talkButton.setAttribute('aria-label', 'Stop listening to Byte');
+      talkButton.title = 'Click to stop';
       break;
     case 'thinking':
-      statusText.innerText = 'Thinking...';
+      statusText.innerText = 'Thinking · click to cancel';
+      talkButton.setAttribute('aria-label', 'Cancel Byte’s response');
+      talkButton.title = 'Click to cancel';
       break;
     case 'speaking':
-      statusText.innerText = 'Speaking...';
+      statusText.innerText = 'Speaking · click to stop';
+      talkButton.setAttribute('aria-label', 'Stop Byte speaking');
+      talkButton.title = 'Click to stop';
       break;
     case 'cancelled':
       statusText.innerText = 'Cancelled';
+      talkButton.setAttribute('aria-label', 'Start talking to Byte');
+      talkButton.title = 'Click to talk · Ctrl+B';
+      break;
+    case 'error':
+      statusText.innerText = 'Couldn’t complete · click to retry';
+      talkButton.setAttribute('aria-label', 'Retry talking to Byte');
+      talkButton.title = 'Click to try again';
       break;
     case 'hidden':
       presenceWidget.classList.add('hidden');
@@ -49,6 +69,10 @@ function updateStatusBadge(state) {
 // Full conversational lifecycle run
 async function runInteraction() {
   if (isRunning) return;
+  if (statusResetTimer) {
+    clearTimeout(statusResetTimer);
+    statusResetTimer = null;
+  }
   isRunning = true;
 
   try {
@@ -61,6 +85,7 @@ async function runInteraction() {
   }
 
   let result = null;
+  let failed = false;
   try {
     result = await invoke('start_interaction');
     console.log('Interaction turn completed:', result);
@@ -74,18 +99,25 @@ async function runInteraction() {
     }
   } catch (err) {
     console.error('Interaction loop error:', err);
+    failed = true;
   } finally {
     isRunning = false;
     if (livingOrb) livingOrb.setAudioLevel(0.0);
     if (!result || !result.auto_listen) {
-      if (livingOrb) livingOrb.setState('idle');
-      updateStatusBadge('idle');
+      if (failed) {
+        if (livingOrb) livingOrb.setState('idle');
+        updateStatusBadge('error');
+        statusResetTimer = setTimeout(() => updateStatusBadge('idle'), 3000);
+      } else {
+        if (livingOrb) livingOrb.setState('idle');
+        updateStatusBadge('idle');
+      }
     }
   }
 }
 
 // Click orb to speak or stop
-orbViewport.addEventListener('click', async () => {
+talkButton.addEventListener('click', async () => {
   if (!isRunning) {
     runInteraction();
   } else {
@@ -134,14 +166,14 @@ window.addEventListener('keydown', async (event) => {
 });
 
 // Cursor ignore click-through outside orb bounds
-orbViewport.addEventListener('mouseenter', async () => {
+talkButton.addEventListener('mouseenter', async () => {
   try {
     const { getCurrentWindow } = window.__TAURI__.window;
     await getCurrentWindow().setIgnoreCursorEvents(false);
   } catch (_) {}
 });
 
-orbViewport.addEventListener('mouseleave', async () => {
+talkButton.addEventListener('mouseleave', async () => {
   try {
     const { getCurrentWindow } = window.__TAURI__.window;
     await getCurrentWindow().setIgnoreCursorEvents(true);
