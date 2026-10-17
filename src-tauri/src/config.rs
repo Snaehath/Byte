@@ -2,4 +2,4 @@ pub mod paths;
 pub mod manager;
 
 pub use paths::BytePaths;
-pub use manager::{AppConfig, LlmConfig, AudioConfig};
+pub use manager::{AppConfig, LlmConfig, AudioConfig, SpeechToolPaths};

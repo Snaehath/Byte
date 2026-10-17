@@ -9,7 +9,7 @@ Byte is a Windows desktop voice assistant built with **Rust, Tauri, and HTML, CS
 3. It sends the text and relevant conversation context to the configured language model.
 4. It speaks the response using the configured speech engine.
 
-Some interactions can continue by listening for another request. The orb and status label show when Byte is listening, thinking, or speaking.
+Some interactions can continue by listening for another request. The orb and status label show when Byte is listening, thinking, or speaking. Open **Type a message** to use text input and review recent replies.
 
 ## AI and speech
 
@@ -19,7 +19,7 @@ Byte's configuration is stored at `%APPDATA%\Byte\config\config.json`. The defau
 
 Depending on the request and available configuration, Byte can open applications, control windows, organize files, access the clipboard, control audio and media, read system information, show notifications, and analyze the screen. Screen analysis uses the configured Ollama vision model and asks for confirmation before capturing the screen. It can also keep selected preferences and conversation history.
 
-The floating widget includes a **Wake word** switch. When enabled, Byte listens for its wake word in the background; switch it off to pause detection. You can also set `wake_word_enabled` in the config file. The optional first-run spoken greeting is off by default; set `first_run_greeting_enabled` to `true` to enable it before Byte's first launch.
+The floating widget includes a **Wake word** switch. When enabled, Byte listens for its wake word in the background; switch it off to pause detection. Setup also shows component health and lets you configure AI and speech model paths. The setup view lets you review saved memory, clear conversation history, or reset all saved memory. The optional first-run spoken greeting is off by default; set `first_run_greeting_enabled` to `true` to enable it before Byte's first launch.
 
 For screen analysis, install a vision model in Ollama (for example, `ollama pull llava`) and set `llm.vision_model` in the config file to that model's name.
 
@@ -30,13 +30,11 @@ For screen analysis, install a vision model in Ollama (for example, `ollama pull
 - `src-tauri/tauri.conf.json` contains Tauri application and window settings.
 - `src-tauri/capabilities/` contains permissions granted to the interface.
 
-The root `src/` and `Cargo.toml` are separate from the Tauri desktop app. Use the Tauri manifest to run the desktop application.
-
 ## Requirements
 
 - Windows 10 or 11
 - Rust toolchain
-- Ollama with a configured model, or a supported cloud AI provider
+- Ollama with a configured model
 - Optional: Whisper and Piper executables and model files for local speech processing
 
 ## Run

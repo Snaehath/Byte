@@ -45,11 +45,21 @@ impl Default for AudioConfig {
     }
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(default)]
+pub struct SpeechToolPaths {
+    pub whisper_exe: String,
+    pub whisper_model: String,
+    pub piper_exe: String,
+    pub piper_model: String,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
 pub struct AppConfig {
     pub llm: LlmConfig,
     pub audio: AudioConfig,
+    pub speech_tools: SpeechToolPaths,
     pub wake_word_enabled: bool,
     pub first_run_greeting_enabled: bool,
 }
@@ -59,6 +69,7 @@ impl Default for AppConfig {
         Self {
             llm: LlmConfig::default(),
             audio: AudioConfig::default(),
+            speech_tools: SpeechToolPaths::default(),
             wake_word_enabled: true,
             first_run_greeting_enabled: false,
         }

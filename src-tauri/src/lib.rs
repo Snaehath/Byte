@@ -86,9 +86,16 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::start_interaction,
+            commands::start_text_interaction,
             commands::stop_action,
             commands::get_system_health,
             commands::reposition_presence,
+            commands::set_conversation_window_size,
+            commands::get_app_settings,
+            commands::save_app_settings,
+            commands::get_memory_snapshot,
+            commands::clear_conversation_history,
+            commands::reset_saved_memory,
             commands::get_wake_word_enabled,
             commands::set_wake_word_enabled
         ])

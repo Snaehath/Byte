@@ -69,14 +69,18 @@ impl HealthChecker {
         let config = AppConfig::load();
         let mut ollama_ok = false;
         let mut ollama_msg = String::new();
-        if let Ok(res) = client.get("http://localhost:11434").timeout(std::time::Duration::from_millis(1500)).send().await {
+        let service_url = config.llm.ollama_url
+            .trim()
+            .trim_end_matches("/v1/chat/completions")
+            .trim_end_matches('/');
+        if let Ok(res) = client.get(service_url).timeout(std::time::Duration::from_millis(1500)).send().await {
             if res.status().is_success() {
                 ollama_ok = true;
-                ollama_msg = format!("Ollama running locally on port 11434 with model '{}' (thinking: {})", config.llm.ollama_model, config.llm.reasoning_effort);
+                ollama_msg = format!("AI service available at {} with model '{}'", service_url, config.llm.ollama_model);
             }
         }
         if !ollama_ok {
-            ollama_msg = "Ollama is not responding on http://localhost:11434. Start Ollama with 'ollama serve'.".to_string();
+            ollama_msg = format!("AI service is not responding at {}. Start the configured service and try again.", service_url);
         }
 
         let ollama_service = ComponentHealth {

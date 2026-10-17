@@ -25,6 +25,17 @@ pub struct ProcessResult {
     pub auto_listen: bool,
 }
 
+#[derive(Serialize)]
+pub struct AppSettings {
+    pub ollama_url: String,
+    pub ollama_model: String,
+    pub vision_model: String,
+    pub whisper_exe: String,
+    pub whisper_model: String,
+    pub piper_exe: String,
+    pub piper_model: String,
+}
+
 #[derive(PartialEq, Eq)]
 enum ConfirmationIntent {
     Confirm,
@@ -89,6 +100,110 @@ pub fn stop_action(state: State<'_, AppState>, app_handle: tauri::AppHandle) -> 
 #[tauri::command]
 pub fn reposition_presence(window: tauri::WebviewWindow) -> Result<(), String> {
     crate::presence::PlacementEngine::position_window(&window, crate::presence::Anchor::BottomRight)
+}
+
+#[tauri::command]
+pub fn set_conversation_window_size(window: tauri::WebviewWindow, expanded: bool) -> Result<(), String> {
+    let size = if expanded {
+        tauri::LogicalSize::new(380.0, 570.0)
+    } else {
+        tauri::LogicalSize::new(220.0, 220.0)
+    };
+    window.set_size(size).map_err(|e| format!("Failed to resize Byte: {}", e))?;
+    crate::presence::PlacementEngine::position_window(&window, crate::presence::Anchor::BottomRight)
+}
+
+#[tauri::command]
+pub fn get_app_settings() -> AppSettings {
+    let config = crate::config::AppConfig::load();
+    AppSettings {
+        ollama_url: config.llm.ollama_url,
+        ollama_model: config.llm.ollama_model,
+        vision_model: config.llm.vision_model,
+        whisper_exe: config.speech_tools.whisper_exe,
+        whisper_model: config.speech_tools.whisper_model,
+        piper_exe: config.speech_tools.piper_exe,
+        piper_model: config.speech_tools.piper_model,
+    }
+}
+
+#[tauri::command]
+pub fn save_app_settings(
+    ollama_url: String,
+    ollama_model: String,
+    vision_model: String,
+    whisper_exe: String,
+    whisper_model: String,
+    piper_exe: String,
+    piper_model: String,
+) -> Result<AppSettings, String> {
+    let ollama_url = ollama_url.trim();
+    let ollama_model = ollama_model.trim();
+    let vision_model = vision_model.trim();
+    let whisper_exe = whisper_exe.trim();
+    let whisper_model = whisper_model.trim();
+    let piper_exe = piper_exe.trim();
+    let piper_model = piper_model.trim();
+    if !(ollama_url.starts_with("http://") || ollama_url.starts_with("https://"))
+        || ollama_url.chars().any(|ch| ch.is_whitespace())
+        || ollama_url.len() > 2048
+    {
+        return Err("Enter a valid HTTP or HTTPS Ollama chat endpoint.".to_string());
+    }
+    if ollama_model.is_empty() || ollama_model.len() > 120 || vision_model.len() > 120 {
+        return Err("Enter a chat model name, and keep model names under 120 characters.".to_string());
+    }
+    if [whisper_exe, whisper_model, piper_exe, piper_model]
+        .iter()
+        .any(|path| path.len() > 2048)
+    {
+        return Err("Speech tool paths must be 2,048 characters or fewer.".to_string());
+    }
+
+    let mut config = crate::config::AppConfig::load();
+    config.llm.ollama_url = ollama_url.to_string();
+    config.llm.ollama_model = ollama_model.to_string();
+    config.llm.vision_model = vision_model.to_string();
+    config.speech_tools.whisper_exe = whisper_exe.to_string();
+    config.speech_tools.whisper_model = whisper_model.to_string();
+    config.speech_tools.piper_exe = piper_exe.to_string();
+    config.speech_tools.piper_model = piper_model.to_string();
+    config.save()?;
+    Ok(AppSettings {
+        ollama_url: config.llm.ollama_url,
+        ollama_model: config.llm.ollama_model,
+        vision_model: config.llm.vision_model,
+        whisper_exe: config.speech_tools.whisper_exe,
+        whisper_model: config.speech_tools.whisper_model,
+        piper_exe: config.speech_tools.piper_exe,
+        piper_model: config.speech_tools.piper_model,
+    })
+}
+
+#[tauri::command]
+pub fn get_memory_snapshot(state: State<'_, AppState>) -> Result<crate::memory::ByteMemory, String> {
+    state.memory.lock()
+        .map(|memory| memory.clone())
+        .map_err(|_| "Saved memory is unavailable.".to_string())
+}
+
+#[tauri::command]
+pub fn clear_conversation_history(state: State<'_, AppState>) -> Result<(), String> {
+    let mut memory = state.memory.lock().map_err(|_| "Saved memory is unavailable.".to_string())?;
+    memory.recent_conversation.clear();
+    memory.save()
+}
+
+#[tauri::command]
+pub fn reset_saved_memory(state: State<'_, AppState>) -> Result<(), String> {
+    let mut memory = state.memory.lock().map_err(|_| "Saved memory is unavailable.".to_string())?;
+    let mut cleared = crate::memory::ByteMemory::default();
+    cleared.user_profile.name.clear();
+    cleared.user_profile.preferences.clear();
+    cleared.user_profile.habits.clear();
+    cleared.is_first_run = false;
+    *memory = cleared;
+    memory.save()
 }
 
 #[tauri::command]
@@ -181,6 +296,30 @@ pub fn is_empty_or_noise(text: &str) -> bool {
 /// Active conversation lifecycle loop (Listen -> Auto-stop on silence -> Transcribe -> Query -> Play TTS)
 #[tauri::command]
 pub async fn start_interaction(state: State<'_, AppState>, window: tauri::WebviewWindow) -> Result<ProcessResult, String> {
+    run_interaction(state, window, None).await
+}
+
+#[tauri::command]
+pub async fn start_text_interaction(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    text: String,
+) -> Result<ProcessResult, String> {
+    let text = text.trim().to_string();
+    if text.is_empty() {
+        return Err("Type a message before sending it.".to_string());
+    }
+    if text.chars().count() > 4000 {
+        return Err("Messages must be 4,000 characters or fewer.".to_string());
+    }
+    run_interaction(state, window, Some(text)).await
+}
+
+async fn run_interaction(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    text_input: Option<String>,
+) -> Result<ProcessResult, String> {
     // Pre-empt any previous interaction if one was still in flight
     if let Ok(mut active) = state.active_interaction.lock() {
         if let Some(prev) = active.take() {
@@ -202,85 +341,45 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
 
     state.is_interacting.store(true, Ordering::SeqCst);
 
-    // 1. Start audio capture & set presence to Listening
-    state.presence.set_state(&window, PresenceState::Listening);
-    let capture_timer = StageTimer::start();
-    audio::start_recording(&state, window.clone())?;
-
-    // 2. Wait while recording is active (silence detector or manual click sets is_recording = false)
-    while state.is_recording.load(Ordering::SeqCst) {
-        if context.is_cancelled() {
-            log::info!("Interaction {} cancelled during audio recording.", context.id);
-            state.presence.set_state(&window, PresenceState::Cancelled);
+    let text_mode = text_input.is_some();
+    let transcription;
+    if let Some(text) = text_input {
+        state.presence.set_state(&window, PresenceState::Thinking);
+        let _ = window.emit("processing", ());
+        transcription = text;
+    } else {
+        // Start audio capture and wait for silence detection or cancellation.
+        state.presence.set_state(&window, PresenceState::Listening);
+        let capture_timer = StageTimer::start();
+        if let Err(error) = audio::start_recording(&state, window.clone()) {
+            state.is_recording.store(false, Ordering::SeqCst);
             state.is_interacting.store(false, Ordering::SeqCst);
-            return Ok(ProcessResult {
-                transcription: String::new(),
-                thinking: String::new(),
-                response: "Cancelled.".to_string(),
-                auto_listen: false,
-            });
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
-    telemetry.vad_capture_ms = capture_timer.elapsed_ms();
-
-    if context.is_cancelled() {
-        state.presence.set_state(&window, PresenceState::Cancelled);
-        state.is_interacting.store(false, Ordering::SeqCst);
-        return Ok(ProcessResult {
-            transcription: String::new(),
-            thinking: String::new(),
-            response: "Cancelled.".to_string(),
-            auto_listen: false,
-        });
-    }
-
-    // 3. Emit processing state: recording done, now thinking
-    state.presence.set_state(&window, PresenceState::Thinking);
-    let _ = window.emit("processing", ());
-
-    // 4. Fetch the recorded samples
-    let raw_samples = {
-        let buffer = state.recorded_data.lock().unwrap();
-        buffer.clone()
-    };
-
-    if raw_samples.is_empty() {
-        state.presence.set_state(&window, PresenceState::Idle);
-        state.is_interacting.store(false, Ordering::SeqCst);
-        return Err("No audio data recorded".to_string());
-    }
-
-    let sample_rate = *state.device_sample_rate.lock().unwrap();
-    let resampled = audio::resample(&raw_samples, sample_rate, 16000);
-
-    // Save to temp WAV file
-    let temp_wav = BytePaths::temp_wav();
-    audio::save_wav(&temp_wav, &resampled).map_err(|e| format!("Failed to save WAV: {}", e))?;
-
-    // Transcribe speech using SpeechService (Whisper STT) with stage timeout and cancellation
-    log::info!("Starting Whisper transcription...");
-    let whisper_timer = StageTimer::start();
-    let wav_for_transcribe = temp_wav.clone();
-    let transcribe_task = tokio::task::spawn_blocking(move || {
-        let speech = SpeechService::default();
-        speech.transcribe(&wav_for_transcribe)
-    });
-
-    let cancel_stt = context.cancellation.cancelled();
-    let transcription_res: Result<String, ByteError> = tokio::select! {
-        res = tokio::time::timeout(std::time::Duration::from_secs(STT_TIMEOUT_SECS), transcribe_task) => {
-            match res {
-                Ok(join_res) => match join_res {
-                    Ok(trans_res) => trans_res.map_err(ByteError::TranscriptionFailed),
-                    Err(e) => Err(ByteError::TranscriptionFailed(format!("Transcription task join error: {}", e))),
-                },
-                Err(_) => Err(ByteError::Timeout { stage: "transcription".to_string(), duration_ms: STT_TIMEOUT_SECS * 1000 }),
+            state.presence.set_state(&window, PresenceState::Idle);
+            if let Ok(mut active) = state.active_interaction.lock() {
+                if active.as_ref().map(|current| current.id) == Some(context.id) {
+                    active.take();
+                }
             }
+            return Err(error);
         }
-        _ = cancel_stt => {
-            let _ = std::fs::remove_file(&temp_wav);
-            log::info!("Interaction {} cancelled during STT transcription.", context.id);
+
+        while state.is_recording.load(Ordering::SeqCst) {
+            if context.is_cancelled() {
+                log::info!("Interaction {} cancelled during audio recording.", context.id);
+                state.presence.set_state(&window, PresenceState::Cancelled);
+                state.is_interacting.store(false, Ordering::SeqCst);
+                return Ok(ProcessResult {
+                    transcription: String::new(),
+                    thinking: String::new(),
+                    response: "Cancelled.".to_string(),
+                    auto_listen: false,
+                });
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        telemetry.vad_capture_ms = capture_timer.elapsed_ms();
+
+        if context.is_cancelled() {
             state.presence.set_state(&window, PresenceState::Cancelled);
             state.is_interacting.store(false, Ordering::SeqCst);
             return Ok(ProcessResult {
@@ -290,28 +389,79 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
                 auto_listen: false,
             });
         }
-    };
-    let _ = std::fs::remove_file(&temp_wav);
-    telemetry.stt_ms = whisper_timer.elapsed_ms();
 
-    let transcription = match transcription_res {
-        Ok(t) => {
-            log::info!("Whisper transcription finished in {}ms: '{}'", telemetry.stt_ms, t);
-            t
-        }
-        Err(err) => {
-            log::error!("STT stage error: {}", err);
-            let friendly = err.to_user_friendly_message();
+        state.presence.set_state(&window, PresenceState::Thinking);
+        let _ = window.emit("processing", ());
+        let raw_samples = {
+            let buffer = state.recorded_data.lock().unwrap();
+            buffer.clone()
+        };
+        if raw_samples.is_empty() {
             state.presence.set_state(&window, PresenceState::Idle);
             state.is_interacting.store(false, Ordering::SeqCst);
-            return Ok(ProcessResult {
-                transcription: String::new(),
-                thinking: String::new(),
-                response: friendly,
-                auto_listen: false,
-            });
+            return Err("No audio data recorded".to_string());
         }
-    };
+
+        let sample_rate = *state.device_sample_rate.lock().unwrap();
+        let resampled = audio::resample(&raw_samples, sample_rate, 16000);
+        let temp_wav = BytePaths::temp_wav();
+        audio::save_wav(&temp_wav, &resampled)
+            .map_err(|e| format!("Failed to save WAV: {}", e))?;
+
+        log::info!("Starting Whisper transcription...");
+        let whisper_timer = StageTimer::start();
+        let wav_for_transcribe = temp_wav.clone();
+        let transcribe_task = tokio::task::spawn_blocking(move || {
+            let speech = SpeechService::default();
+            speech.transcribe(&wav_for_transcribe)
+        });
+
+        let cancel_stt = context.cancellation.cancelled();
+        let transcription_res: Result<String, ByteError> = tokio::select! {
+            res = tokio::time::timeout(std::time::Duration::from_secs(STT_TIMEOUT_SECS), transcribe_task) => {
+                match res {
+                    Ok(join_res) => match join_res {
+                        Ok(trans_res) => trans_res.map_err(ByteError::TranscriptionFailed),
+                        Err(e) => Err(ByteError::TranscriptionFailed(format!("Transcription task join error: {}", e))),
+                    },
+                    Err(_) => Err(ByteError::Timeout { stage: "transcription".to_string(), duration_ms: STT_TIMEOUT_SECS * 1000 }),
+                }
+            }
+            _ = cancel_stt => {
+                let _ = std::fs::remove_file(&temp_wav);
+                log::info!("Interaction {} cancelled during STT transcription.", context.id);
+                state.presence.set_state(&window, PresenceState::Cancelled);
+                state.is_interacting.store(false, Ordering::SeqCst);
+                return Ok(ProcessResult {
+                    transcription: String::new(),
+                    thinking: String::new(),
+                    response: "Cancelled.".to_string(),
+                    auto_listen: false,
+                });
+            }
+        };
+        let _ = std::fs::remove_file(&temp_wav);
+        telemetry.stt_ms = whisper_timer.elapsed_ms();
+
+        transcription = match transcription_res {
+            Ok(text) => {
+                log::info!("Whisper transcription finished in {}ms: '{}'", telemetry.stt_ms, text);
+                text
+            }
+            Err(err) => {
+                log::error!("STT stage error: {}", err);
+                let friendly = err.to_user_friendly_message();
+                state.presence.set_state(&window, PresenceState::Idle);
+                state.is_interacting.store(false, Ordering::SeqCst);
+                return Ok(ProcessResult {
+                    transcription: String::new(),
+                    thinking: String::new(),
+                    response: friendly,
+                    auto_listen: false,
+                });
+            }
+        };
+    }
 
     if context.is_cancelled() {
         log::info!("Interaction {} cancelled after STT transcription.", context.id);
@@ -646,7 +796,7 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
         has_pending,
         has_error,
     );
-    let auto_listen = intent.should_auto_listen();
+    let auto_listen = !text_mode && intent.should_auto_listen();
     log::info!("Conversation intent resolved: {:?} (auto_listen: {})", intent, auto_listen);
 
     let is_farewell = intent == crate::core::ConversationIntent::Farewell;
@@ -672,6 +822,22 @@ pub async fn start_interaction(state: State<'_, AppState>, window: tauri::Webvie
             }
             let _ = mem.save();
         }
+    }
+
+    if text_mode {
+        state.presence.set_state(&window, PresenceState::Idle);
+        state.is_interacting.store(false, Ordering::SeqCst);
+        if let Ok(mut active) = state.active_interaction.lock() {
+            if active.as_ref().map(|current| current.id) == Some(context.id) {
+                active.take();
+            }
+        }
+        return Ok(ProcessResult {
+            transcription,
+            thinking: assistant_resp.thinking,
+            response: response_text,
+            auto_listen: false,
+        });
     }
 
     // 7. TTS synthesis and audio playback

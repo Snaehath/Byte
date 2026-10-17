@@ -36,8 +36,13 @@ pub fn start_recording(state: &AppState, window: tauri::WebviewWindow) -> Result
     let window_clone = window.clone();
     let vad = Arc::new(std::sync::Mutex::new(AdaptiveVad::new()));
     let vad_clone = Arc::clone(&vad);
+    let (startup_tx, startup_rx) = std::sync::mpsc::sync_channel(1);
 
-    let err_fn = |err| log::error!("Audio recording stream error: {}", err);
+    let is_recording_error = Arc::clone(&is_recording_clone);
+    let err_fn = move |err| {
+        is_recording_error.store(false, Ordering::SeqCst);
+        log::error!("Audio recording stream error: {}", err);
+    };
 
     std::thread::spawn(move || {
         let is_recording_cb = Arc::clone(&is_recording_clone);
@@ -93,7 +98,8 @@ pub fn start_recording(state: &AppState, window: tauri::WebviewWindow) -> Result
                 None,
             ),
             _ => {
-                log::error!("Unsupported microphone sample format");
+                is_recording_clone.store(false, Ordering::SeqCst);
+                let _ = startup_tx.send(Err("Unsupported microphone sample format".to_string()));
                 return;
             }
         };
@@ -101,15 +107,19 @@ pub fn start_recording(state: &AppState, window: tauri::WebviewWindow) -> Result
         let stream = match stream_result {
             Ok(s) => s,
             Err(e) => {
-                log::error!("Failed to build input stream: {}", e);
+                is_recording_clone.store(false, Ordering::SeqCst);
+                let _ = startup_tx.send(Err(format!("Failed to build microphone stream: {}", e)));
                 return;
             }
         };
 
         if let Err(e) = stream.play() {
-            log::error!("Failed to play input stream: {}", e);
+            is_recording_clone.store(false, Ordering::SeqCst);
+            let _ = startup_tx.send(Err(format!("Failed to start microphone stream: {}", e)));
             return;
         }
+
+        let _ = startup_tx.send(Ok(()));
 
         while is_recording_clone.load(Ordering::SeqCst) {
             std::thread::sleep(std::time::Duration::from_millis(50));
@@ -118,8 +128,14 @@ pub fn start_recording(state: &AppState, window: tauri::WebviewWindow) -> Result
         log::info!("Microphone capture finished.");
     });
 
-    log::info!("Recording started at {}Hz ({} channels)", sample_rate, channels);
-    Ok(())
+    match startup_rx.recv() {
+        Ok(Ok(())) => {
+            log::info!("Recording started at {}Hz ({} channels)", sample_rate, channels);
+            Ok(())
+        }
+        Ok(Err(error)) => Err(error),
+        Err(_) => Err("Microphone capture failed before it could start".to_string()),
+    }
 }
 
 pub fn start_wake_word_detector(
@@ -193,6 +209,7 @@ pub fn start_wake_word_detector(
         };
 
         let mut detector_paused = false;
+        let mut last_whisper_check: Option<std::time::Instant> = None;
         if wake_word_enabled.load(Ordering::SeqCst) {
             let _ = stream.play();
         } else {
@@ -245,14 +262,28 @@ pub fn start_wake_word_detector(
             let sum_sq: f32 = samples.iter().map(|&x| x * x).sum();
             let rms = (sum_sq / samples.len() as f32).sqrt();
             if rms > 0.04 {
+                if last_whisper_check
+                    .map(|last| last.elapsed() < std::time::Duration::from_secs(3))
+                    .unwrap_or(false)
+                {
+                    continue;
+                }
+                last_whisper_check = Some(std::time::Instant::now());
+
                 // High energy burst detected in background
                 log::info!("Wake detector observed voice energy (RMS: {:.4}). Checking wake intent...", rms);
                 let resampled = crate::audio::resampler::resample(&samples, sample_rate, 16000);
                 let temp_path = crate::config::paths::BytePaths::temp_dir().join("wake_check.wav");
                 if crate::audio::resampler::save_wav(&temp_path, &resampled).is_ok() {
+                    if !wake_word_enabled.load(Ordering::SeqCst)
+                        || is_recording.load(Ordering::SeqCst)
+                        || is_interacting.load(Ordering::SeqCst)
+                    {
+                        let _ = std::fs::remove_file(&temp_path);
+                        continue;
+                    }
                     let whisper = crate::audio::stt::WhisperStt::default();
-                    use crate::audio::stt::SpeechToText;
-                    if let Ok(text) = whisper.transcribe(&temp_path) {
+                    if let Ok(text) = whisper.transcribe_with_thread_limit(&temp_path, 2) {
                         let clean = text.to_lowercase();
                         if wake_word_enabled.load(Ordering::SeqCst)
                             && (clean.contains("byte")

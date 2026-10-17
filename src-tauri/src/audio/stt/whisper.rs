@@ -21,20 +21,18 @@ impl WhisperStt {
     pub fn new(exe_path: PathBuf, model_path: PathBuf) -> Self {
         Self { exe_path, model_path }
     }
-}
 
-impl SpeechToText for WhisperStt {
-    fn transcribe(&self, audio_path: &Path) -> Result<String, String> {
+    pub fn transcribe_with_thread_limit(&self, audio_path: &Path, thread_limit: usize) -> Result<String, String> {
+        self.transcribe_with_threads(audio_path, thread_limit.max(1))
+    }
+
+    fn transcribe_with_threads(&self, audio_path: &Path, num_threads: usize) -> Result<String, String> {
         if !self.exe_path.exists() {
             return Err(format!("Whisper CLI not found at: {}", self.exe_path.display()));
         }
         if !self.model_path.exists() {
             return Err(format!("Whisper model not found at: {}", self.model_path.display()));
         }
-
-        let num_threads = std::thread::available_parallelism()
-            .map(|val| val.get())
-            .unwrap_or(4);
 
         let output = Command::new(&self.exe_path)
             .arg("-m")
@@ -54,5 +52,14 @@ impl SpeechToText for WhisperStt {
             let error = String::from_utf8_lossy(&output.stderr).to_string();
             Err(format!("Whisper execution error: {}", error))
         }
+    }
+}
+
+impl SpeechToText for WhisperStt {
+    fn transcribe(&self, audio_path: &Path) -> Result<String, String> {
+        let num_threads = std::thread::available_parallelism()
+            .map(|val| val.get())
+            .unwrap_or(4);
+        self.transcribe_with_threads(audio_path, num_threads)
     }
 }

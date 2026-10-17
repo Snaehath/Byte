@@ -52,6 +52,10 @@ impl BytePaths {
                 return pb;
             }
         }
+        let configured = crate::config::AppConfig::load().speech_tools.whisper_exe;
+        if !configured.trim().is_empty() {
+            return PathBuf::from(configured);
+        }
         let in_models = Self::models_dir().join("whisper-cli.exe");
         if in_models.exists() {
             return in_models;
@@ -71,6 +75,10 @@ impl BytePaths {
             if pb.exists() {
                 return pb;
             }
+        }
+        let configured = crate::config::AppConfig::load().speech_tools.whisper_model;
+        if !configured.trim().is_empty() {
+            return PathBuf::from(configured);
         }
         let in_models = Self::models_dir().join("ggml-tiny.en.bin");
         if in_models.exists() {
@@ -92,6 +100,10 @@ impl BytePaths {
                 return pb;
             }
         }
+        let configured = crate::config::AppConfig::load().speech_tools.piper_exe;
+        if !configured.trim().is_empty() {
+            return PathBuf::from(configured);
+        }
         let in_models = Self::models_dir().join("piper.exe");
         if in_models.exists() {
             return in_models;
@@ -111,6 +123,10 @@ impl BytePaths {
             if pb.exists() {
                 return pb;
             }
+        }
+        let configured = crate::config::AppConfig::load().speech_tools.piper_model;
+        if !configured.trim().is_empty() {
+            return PathBuf::from(configured);
         }
         let in_models = Self::models_dir().join("en_US-lessac-medium.onnx");
         if in_models.exists() {
