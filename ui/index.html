@@ -11,7 +11,7 @@
     />
   </head>
   <body>
-    <div class="presence-widget" data-tauri-drag-region>
+    <div class="presence-widget">
       <button
         class="orb-viewport"
         id="talk-button"
@@ -36,52 +36,17 @@
 
     <section class="conversation-panel" id="conversation-panel" aria-label="Conversation" hidden>
       <header class="conversation-header">
-        <div class="panel-tabs" role="tablist" aria-label="Byte panels">
-          <button id="chat-tab" class="panel-tab active" type="button" role="tab" aria-selected="true">Chat</button>
-          <button id="setup-tab" class="panel-tab" type="button" role="tab" aria-selected="false">Setup</button>
-        </div>
+        <span class="conversation-title">Message Byte</span>
         <button id="text-close" type="button" aria-label="Close conversation">×</button>
       </header>
       <div id="chat-view" class="panel-view">
-        <div class="conversation-messages" id="conversation-messages" role="log" aria-live="polite"></div>
         <form class="text-form" id="text-form">
-          <textarea id="text-input" rows="3" maxlength="4000" aria-label="Message Byte" placeholder="Type a message…"></textarea>
+          <textarea id="text-input" rows="2" maxlength="4000" aria-label="Message Byte" placeholder="Type a message…"></textarea>
           <div class="text-form-footer">
-            <span>Enter to send · Shift+Enter for a new line</span>
+            <span id="text-feedback" role="status" aria-live="polite">Byte will speak its reply.</span>
             <button id="text-send" type="submit">Send</button>
           </div>
         </form>
-      </div>
-      <div id="setup-view" class="panel-view" hidden>
-        <div class="setup-heading">
-          <span>System check</span>
-          <button id="health-refresh" type="button">Refresh</button>
-        </div>
-        <div class="health-list" id="health-list" role="status" aria-live="polite">Checking components…</div>
-        <form id="settings-form" class="settings-form">
-          <label>Ollama chat endpoint<input id="ollama-url" type="url" autocomplete="url" required /></label>
-          <label>Chat model<input id="ollama-model" type="text" required maxlength="120" /></label>
-          <label>Vision model<input id="vision-model" type="text" maxlength="120" /></label>
-          <label>Whisper executable<input id="whisper-exe" type="text" autocomplete="off" /></label>
-          <label>Whisper model<input id="whisper-model" type="text" autocomplete="off" /></label>
-          <label>Piper executable<input id="piper-exe" type="text" autocomplete="off" /></label>
-          <label>Piper model<input id="piper-model" type="text" autocomplete="off" /></label>
-          <div class="settings-footer">
-            <span id="settings-feedback" role="status" aria-live="polite"></span>
-            <button id="settings-save" type="submit">Save</button>
-          </div>
-        </form>
-        <section class="memory-controls" aria-labelledby="memory-heading">
-          <div class="memory-heading">
-            <span id="memory-heading">Saved memory</span>
-            <button id="memory-refresh" type="button">Refresh</button>
-          </div>
-          <div id="memory-summary" class="memory-summary" role="status" aria-live="polite">Loading saved memory…</div>
-          <div class="memory-actions">
-            <button id="clear-history" type="button">Clear conversation history</button>
-            <button id="reset-memory" type="button">Reset all memory</button>
-          </div>
-        </section>
       </div>
     </section>
 

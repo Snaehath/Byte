@@ -22,33 +22,19 @@ const wakeToggle = document.getElementById('wake-toggle');
 const textToggle = document.getElementById('text-toggle');
 const textClose = document.getElementById('text-close');
 const conversationPanel = document.getElementById('conversation-panel');
-const conversationMessages = document.getElementById('conversation-messages');
 const textForm = document.getElementById('text-form');
 const textInput = document.getElementById('text-input');
 const textSend = document.getElementById('text-send');
-const chatTab = document.getElementById('chat-tab');
-const setupTab = document.getElementById('setup-tab');
-const chatView = document.getElementById('chat-view');
-const setupView = document.getElementById('setup-view');
-const healthList = document.getElementById('health-list');
-const healthRefresh = document.getElementById('health-refresh');
-const settingsForm = document.getElementById('settings-form');
-const ollamaUrlInput = document.getElementById('ollama-url');
-const ollamaModelInput = document.getElementById('ollama-model');
-const visionModelInput = document.getElementById('vision-model');
-const whisperExeInput = document.getElementById('whisper-exe');
-const whisperModelInput = document.getElementById('whisper-model');
-const piperExeInput = document.getElementById('piper-exe');
-const piperModelInput = document.getElementById('piper-model');
-const settingsFeedback = document.getElementById('settings-feedback');
-const settingsSave = document.getElementById('settings-save');
-const memorySummary = document.getElementById('memory-summary');
-const memoryRefresh = document.getElementById('memory-refresh');
-const clearHistoryButton = document.getElementById('clear-history');
-const resetMemoryButton = document.getElementById('reset-memory');
+const textFeedback = document.getElementById('text-feedback');
 
 let isRunning = false;
 let statusResetTimer = null;
+let placementMode = 'center';
+let manualPlacement = false;
+let orbPointerStart = null;
+let orbWasDragged = false;
+let suppressNextOrbClick = false;
+let placementCheckPending = false;
 
 function updateStatusBadge(state) {
   if (state !== 'error' && statusResetTimer) {
@@ -105,18 +91,6 @@ function updateWakeToggle(enabled) {
   wakeToggle.title = `Click to turn wake word detection ${enabled ? 'off' : 'on'}`;
 }
 
-function appendMessage(role, text) {
-  if (!text || !text.trim()) return;
-  const message = document.createElement('p');
-  message.className = `conversation-message ${role}`;
-  message.textContent = text.trim();
-  conversationMessages.appendChild(message);
-  while (conversationMessages.children.length > 20) {
-    conversationMessages.firstElementChild.remove();
-  }
-  conversationMessages.scrollTop = conversationMessages.scrollHeight;
-}
-
 async function setConversationOpen(open) {
   const win = window.__TAURI__.window.getCurrentWindow();
   if (open) {
@@ -124,9 +98,8 @@ async function setConversationOpen(open) {
     document.body.classList.add('text-open');
     textToggle.setAttribute('aria-expanded', 'true');
     try {
-      await win.setIgnoreCursorEvents(false);
       await win.show();
-      await invoke('set_conversation_window_size', { expanded: true });
+      await invoke('set_conversation_window_size', { expanded: true, placementMode: manualPlacement ? 'manual' : placementMode });
       await win.setFocus();
       textInput.focus();
     } catch (err) {
@@ -140,169 +113,12 @@ async function setConversationOpen(open) {
     document.body.classList.remove('text-open');
     textToggle.setAttribute('aria-expanded', 'false');
     try {
-      await invoke('set_conversation_window_size', { expanded: false });
-      await win.setIgnoreCursorEvents(true);
+      await invoke('set_conversation_window_size', { expanded: false, placementMode: manualPlacement ? 'manual' : placementMode });
     } catch (err) {
       console.error('Failed to close conversation panel:', err);
     }
   }
 }
-
-function selectPanel(name) {
-  const showSetup = name === 'setup';
-  chatView.hidden = showSetup;
-  setupView.hidden = !showSetup;
-  chatTab.classList.toggle('active', !showSetup);
-  setupTab.classList.toggle('active', showSetup);
-  chatTab.setAttribute('aria-selected', String(!showSetup));
-  setupTab.setAttribute('aria-selected', String(showSetup));
-  if (showSetup) {
-    loadAppSettings();
-    refreshHealth();
-    refreshMemory();
-  } else {
-    textInput.focus();
-  }
-}
-
-async function loadAppSettings() {
-  settingsFeedback.textContent = '';
-  try {
-    const settings = await invoke('get_app_settings');
-    ollamaUrlInput.value = settings.ollama_url;
-    ollamaModelInput.value = settings.ollama_model;
-    visionModelInput.value = settings.vision_model;
-    whisperExeInput.value = settings.whisper_exe;
-    whisperModelInput.value = settings.whisper_model;
-    piperExeInput.value = settings.piper_exe;
-    piperModelInput.value = settings.piper_model;
-  } catch (err) {
-    console.error('Failed to load AI settings:', err);
-    settingsFeedback.textContent = 'Could not load settings';
-  }
-}
-
-async function refreshHealth() {
-  healthList.textContent = 'Checking components…';
-  healthRefresh.disabled = true;
-  try {
-    const report = await invoke('get_system_health');
-    healthList.replaceChildren();
-    const components = [
-      ['Microphone', report.microphone],
-      ['Whisper', report.whisper_binary.available && report.whisper_model.available
-        ? { available: true, details: report.whisper_binary.details }
-        : { available: false, details: `${report.whisper_binary.details}; ${report.whisper_model.details}` }],
-      ['Piper', report.piper_binary.available && report.piper_model.available
-        ? { available: true, details: report.piper_binary.details }
-        : { available: false, details: `${report.piper_binary.details}; ${report.piper_model.details}` }],
-      ['Ollama', report.ollama_service],
-      ['Memory', report.memory_store],
-    ];
-    for (const [name, component] of components) {
-      const row = document.createElement('div');
-      row.className = 'health-row';
-      const label = document.createElement('span');
-      label.textContent = name;
-      const state = document.createElement('span');
-      state.className = component.available ? 'available' : 'unavailable';
-      state.textContent = component.available ? 'Ready' : 'Unavailable';
-      state.title = component.details;
-      row.append(label, state);
-      healthList.appendChild(row);
-    }
-  } catch (err) {
-    console.error('Health check failed:', err);
-    healthList.textContent = 'Could not check system status';
-  } finally {
-    healthRefresh.disabled = false;
-  }
-}
-
-async function refreshMemory() {
-  memorySummary.textContent = 'Loading saved memory…';
-  try {
-    const memory = await invoke('get_memory_snapshot');
-    const lines = [`Name: ${memory.user_profile.name || 'Not set'}`];
-    const preferences = Object.entries(memory.user_profile.preferences || {});
-    lines.push(preferences.length
-      ? `Preferences: ${preferences.map(([key, value]) => `${key} = ${value}`).join(' · ')}`
-      : 'Preferences: none');
-    lines.push(memory.user_profile.habits?.length
-      ? `Habits: ${memory.user_profile.habits.join(' · ')}`
-      : 'Habits: none');
-    lines.push(`Conversation history: ${memory.recent_conversation?.length || 0} messages`);
-    lines.push(`Reminders: ${memory.scheduled_reminders?.length || 0}`);
-    memorySummary.textContent = lines.join('\n');
-  } catch (err) {
-    console.error('Could not load saved memory:', err);
-    memorySummary.textContent = 'Could not load saved memory';
-  }
-}
-
-memoryRefresh.addEventListener('click', refreshMemory);
-
-clearHistoryButton.addEventListener('click', async () => {
-  if (!window.confirm('Clear Byte’s saved conversation history?')) return;
-  clearHistoryButton.disabled = true;
-  try {
-    await invoke('clear_conversation_history');
-    conversationMessages.replaceChildren();
-    await refreshMemory();
-  } catch (err) {
-    memorySummary.textContent = `Could not clear history: ${err}`;
-  } finally {
-    clearHistoryButton.disabled = false;
-  }
-});
-
-resetMemoryButton.addEventListener('click', async () => {
-  if (!window.confirm('Reset Byte’s saved name, preferences, habits, reminders, and conversation history?')) return;
-  resetMemoryButton.disabled = true;
-  try {
-    await invoke('reset_saved_memory');
-    conversationMessages.replaceChildren();
-    await refreshMemory();
-  } catch (err) {
-    memorySummary.textContent = `Could not reset saved memory: ${err}`;
-  } finally {
-    resetMemoryButton.disabled = false;
-  }
-});
-
-chatTab.addEventListener('click', () => selectPanel('chat'));
-setupTab.addEventListener('click', () => selectPanel('setup'));
-healthRefresh.addEventListener('click', refreshHealth);
-
-settingsForm.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  settingsSave.disabled = true;
-  settingsFeedback.textContent = 'Saving…';
-  try {
-    const settings = await invoke('save_app_settings', {
-      ollamaUrl: ollamaUrlInput.value,
-      ollamaModel: ollamaModelInput.value,
-      visionModel: visionModelInput.value,
-      whisperExe: whisperExeInput.value,
-      whisperModel: whisperModelInput.value,
-      piperExe: piperExeInput.value,
-      piperModel: piperModelInput.value,
-    });
-    ollamaUrlInput.value = settings.ollama_url;
-    ollamaModelInput.value = settings.ollama_model;
-    visionModelInput.value = settings.vision_model;
-    whisperExeInput.value = settings.whisper_exe;
-    whisperModelInput.value = settings.whisper_model;
-    piperExeInput.value = settings.piper_exe;
-    piperModelInput.value = settings.piper_model;
-    settingsFeedback.textContent = 'Saved';
-    refreshHealth();
-  } catch (err) {
-    settingsFeedback.textContent = String(err);
-  } finally {
-    settingsSave.disabled = false;
-  }
-});
 
 textToggle.addEventListener('click', () => setConversationOpen(true));
 textClose.addEventListener('click', () => setConversationOpen(false));
@@ -312,20 +128,21 @@ textForm.addEventListener('submit', async (event) => {
   const text = textInput.value.trim();
   if (!text || isRunning) return;
 
-  appendMessage('user', text);
   textInput.value = '';
   textSend.disabled = true;
+  textFeedback.textContent = 'Thinking…';
   isRunning = true;
   try {
-    const result = await invoke('start_text_interaction', { text });
-    appendMessage('assistant', result.response);
+    const interaction = invoke('start_text_interaction', { text });
+    await setConversationOpen(false);
+    await interaction;
+    textFeedback.textContent = 'Byte has replied aloud.';
   } catch (err) {
     console.error('Text interaction failed:', err);
-    appendMessage('assistant', String(err));
+    textFeedback.textContent = String(err);
   } finally {
     isRunning = false;
     textSend.disabled = false;
-    textInput.focus();
   }
 });
 
@@ -384,8 +201,6 @@ async function runInteraction() {
     result = await invoke('start_interaction');
     console.log('Interaction turn completed:', result);
     if (result) {
-      appendMessage('user', result.transcription);
-      appendMessage('assistant', result.response);
     }
 
     if (result && result.auto_listen) {
@@ -415,7 +230,49 @@ async function runInteraction() {
 }
 
 // Click orb to speak or stop
+talkButton.addEventListener('pointerdown', (event) => {
+  if (event.button !== 0) return;
+  orbPointerStart = { x: event.screenX, y: event.screenY };
+  orbWasDragged = false;
+});
+
+window.addEventListener('pointermove', async (event) => {
+  if (!orbPointerStart || orbWasDragged) return;
+  const dx = event.screenX - orbPointerStart.x;
+  const dy = event.screenY - orbPointerStart.y;
+  if (Math.hypot(dx, dy) < 7) return;
+
+  orbWasDragged = true;
+  manualPlacement = true;
+  try {
+    await window.__TAURI__.window.getCurrentWindow().startDragging();
+  } catch (err) {
+    console.error('Could not drag Byte window:', err);
+    manualPlacement = false;
+    orbWasDragged = false;
+    orbPointerStart = null;
+  }
+});
+
+window.addEventListener('pointerup', () => {
+  if (orbWasDragged) {
+    suppressNextOrbClick = true;
+    setTimeout(() => { suppressNextOrbClick = false; }, 600);
+  }
+  orbPointerStart = null;
+  orbWasDragged = false;
+});
+
+window.addEventListener('pointercancel', () => {
+  orbPointerStart = null;
+  orbWasDragged = false;
+});
+
 talkButton.addEventListener('click', async () => {
+  if (suppressNextOrbClick) {
+    suppressNextOrbClick = false;
+    return;
+  }
   if (!isRunning) {
     runInteraction();
   } else {
@@ -467,29 +324,21 @@ window.addEventListener('keydown', async (event) => {
   }
 });
 
-// Cursor ignore click-through outside orb bounds
-presenceWidget.addEventListener('mouseenter', async () => {
+async function updatePresencePlacement() {
+  if (manualPlacement || isRunning || document.body.classList.contains('text-open') || placementCheckPending) return;
+  placementCheckPending = true;
   try {
-    const { getCurrentWindow } = window.__TAURI__.window;
-    await getCurrentWindow().setIgnoreCursorEvents(false);
-  } catch (_) {}
-});
+    placementMode = await invoke('reposition_presence', { currentMode: placementMode });
+  } catch (err) {
+    console.error('Could not position Byte:', err);
+  } finally {
+    placementCheckPending = false;
+  }
+}
 
-presenceWidget.addEventListener('mouseleave', async () => {
-  if (document.body.classList.contains('text-open')) return;
-  try {
-    const { getCurrentWindow } = window.__TAURI__.window;
-    await getCurrentWindow().setIgnoreCursorEvents(true);
-  } catch (_) {}
-});
+window.addEventListener('DOMContentLoaded', updatePresencePlacement);
 
-window.addEventListener('DOMContentLoaded', async () => {
-  try {
-    const { getCurrentWindow } = window.__TAURI__.window;
-    await getCurrentWindow().setIgnoreCursorEvents(true);
-    await invoke('reposition_presence');
-  } catch (_) {}
-});
+setInterval(updatePresencePlacement, 2500);
 
 // Initial state setup
 updateStatusBadge('idle');

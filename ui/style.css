@@ -52,7 +52,7 @@ html, body {
   display: flex;
   justify-content: center;
   align-items: center;
-  cursor: pointer;
+  cursor: grab;
   position: relative;
   border-radius: 50%;
   -webkit-tap-highlight-color: transparent;
@@ -69,6 +69,10 @@ html, body {
 
 .orb-viewport:active #byte-orb-canvas {
   transform: scale(0.97);
+}
+
+.orb-viewport:active {
+  cursor: grabbing;
 }
 
 #byte-orb-canvas {
@@ -149,7 +153,7 @@ html, body {
   top: 222px;
   left: 18px;
   width: 344px;
-  height: 330px;
+  height: 122px;
   display: flex;
   flex-direction: column;
   padding: 12px;
@@ -175,26 +179,10 @@ html, body {
   min-height: 25px;
 }
 
-.panel-tabs {
-  display: flex;
-  gap: 4px;
-}
-
-.panel-tab,
-#health-refresh {
-  padding: 5px 8px;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--text-muted);
-  font: inherit;
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.panel-tab.active {
-  background: rgba(255, 255, 255, 0.09);
+.conversation-title {
   color: var(--text-main);
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .panel-view {
@@ -206,11 +194,6 @@ html, body {
 
 .panel-view[hidden] {
   display: none;
-}
-
-#setup-view {
-  gap: 5px;
-  overflow: auto;
 }
 
 #text-close,
@@ -229,159 +212,12 @@ html, body {
   line-height: 1;
 }
 
-.conversation-messages {
+.text-form {
+  display: flex;
   flex: 1;
   min-height: 0;
-  margin: 8px 0;
-  overflow: auto;
-  user-select: text;
-  -webkit-user-select: text;
-}
-
-.conversation-message {
-  margin: 0 0 8px;
-  padding: 8px 10px;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--text-main);
-  font-size: 12px;
-  line-height: 1.45;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  user-select: text;
-  -webkit-user-select: text;
-}
-
-.conversation-message.user {
-  background: rgba(9, 132, 227, 0.16);
-}
-
-.text-form {
-  flex: none;
-}
-
-.setup-heading,
-.settings-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-size: 11px;
-}
-
-.health-list {
-  max-height: 84px;
-  margin: 4px 0 8px;
-  overflow: auto;
-  color: var(--text-muted);
-  font-size: 10px;
-}
-
-.health-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 3px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-}
-
-.health-row .available {
-  color: #55efc4;
-}
-
-.health-row .unavailable {
-  color: #ff9f9f;
-}
-
-.settings-form {
-  display: flex;
-  flex: none;
   flex-direction: column;
-  gap: 6px;
-  user-select: text;
-  -webkit-user-select: text;
-}
-
-.memory-controls {
-  flex: none;
-  padding-top: 6px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.memory-heading,
-.memory-actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  font-size: 10px;
-}
-
-#memory-refresh,
-.memory-actions button {
-  border: 0;
-  border-radius: 6px;
-  padding: 4px 6px;
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--text-main);
-  font: inherit;
-  font-size: 9px;
-  cursor: pointer;
-}
-
-.memory-summary {
-  max-height: 58px;
-  margin: 4px 0;
-  overflow: auto;
-  color: var(--text-muted);
-  font-size: 9px;
-  line-height: 1.35;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  user-select: text;
-  -webkit-user-select: text;
-}
-
-.memory-actions button:last-child {
-  color: #ffb2b2;
-}
-
-.settings-form label {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  color: var(--text-muted);
-  font-size: 10px;
-}
-
-.settings-form input {
-  width: 100%;
-  padding: 6px 8px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 7px;
-  background: rgba(0, 0, 0, 0.22);
-  color: var(--text-main);
-  font: inherit;
-  font-size: 11px;
-  user-select: text;
-  -webkit-user-select: text;
-}
-
-.settings-footer {
-  min-height: 28px;
-}
-
-#settings-feedback {
-  color: var(--text-muted);
-  font-size: 9px;
-}
-
-#settings-save {
-  padding: 5px 10px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 8px;
-  background: rgba(108, 92, 231, 0.32);
-  color: var(--text-main);
-  cursor: pointer;
+  justify-content: center;
 }
 
 #text-input {
@@ -469,7 +305,6 @@ body.text-open .conversation-panel {
   .wake-toggle,
   .text-toggle,
   .conversation-panel,
-  .conversation-message,
   #status-text {
     transition-duration: 0.01ms;
   }
