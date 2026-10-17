@@ -8,6 +8,7 @@ pub enum Anchor {
     TopRight,
     TopLeft,
     Taskbar,
+    Center,
 }
 
 impl Default for Anchor {
@@ -63,11 +64,54 @@ impl PlacementEngine {
                 let y = monitor.y + margin_y;
                 (x, y)
             }
+            Anchor::Center => {
+                let x = monitor.x + (monitor.width as i32 - window.width as i32) / 2;
+                let y = monitor.y + (monitor.height as i32 - window.height as i32) / 2;
+                (x, y)
+            }
         }
     }
 
     /// Position a Tauri WebviewWindow relative to the active or primary monitor
     pub fn position_window(window: &WebviewWindow, anchor: Anchor) -> Result<(), String> {
+        let (target_x, target_y) = Self::target_position(window, anchor)?;
+
+        window
+            .set_position(Position::Physical(PhysicalPosition::new(target_x, target_y)))
+            .map_err(|e| format!("Failed to set window position: {}", e))?;
+
+        Ok(())
+    }
+
+    /// Ease the floating window between anchors instead of snapping instantly.
+    pub async fn position_window_smooth(window: &WebviewWindow, anchor: Anchor) -> Result<(), String> {
+        let (target_x, target_y) = Self::target_position(window, anchor)?;
+        let start = window
+            .outer_position()
+            .map_err(|e| format!("Failed to get window position: {}", e))?;
+        let dx = target_x - start.x;
+        let dy = target_y - start.y;
+
+        if dx.abs() < 3 && dy.abs() < 3 {
+            return Ok(());
+        }
+
+        const STEPS: i32 = 16;
+        for step in 1..=STEPS {
+            let progress = step as f64 / STEPS as f64;
+            let eased = 1.0 - (1.0 - progress).powi(3);
+            let x = start.x + (dx as f64 * eased).round() as i32;
+            let y = start.y + (dy as f64 * eased).round() as i32;
+            window
+                .set_position(Position::Physical(PhysicalPosition::new(x, y)))
+                .map_err(|e| format!("Failed to move window: {}", e))?;
+            tokio::time::sleep(std::time::Duration::from_millis(12)).await;
+        }
+
+        Ok(())
+    }
+
+    fn target_position(window: &WebviewWindow, anchor: Anchor) -> Result<(i32, i32), String> {
         let monitor = window
             .current_monitor()
             .map_err(|e| format!("Failed to get current monitor: {}", e))?
@@ -106,11 +150,7 @@ impl PlacementEngine {
             target_x, target_y, mon_size.width, mon_size.height, mon_pos.x, mon_pos.y
         );
 
-        window
-            .set_position(Position::Physical(PhysicalPosition::new(target_x, target_y)))
-            .map_err(|e| format!("Failed to set window position: {}", e))?;
-
-        Ok(())
+        Ok((target_x, target_y))
     }
 }
 

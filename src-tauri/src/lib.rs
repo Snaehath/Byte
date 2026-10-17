@@ -100,11 +100,6 @@ pub fn run() {
             commands::set_wake_word_enabled
         ])
         .setup(move |app| {
-            // Position presence window above taskbar on bottom-right of active/primary monitor
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = crate::presence::PlacementEngine::position_window(&window, crate::presence::Anchor::BottomRight);
-            }
-
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()

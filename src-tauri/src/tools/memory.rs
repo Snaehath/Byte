@@ -5,7 +5,7 @@ pub struct UpdateMemoryTool;
 
 impl DesktopTool for UpdateMemoryTool {
     fn name(&self) -> &str { "update_memory" }
-    fn description(&self) -> &str { "Update user name, preferences, or habits in persistent memory." }
+    fn description(&self) -> &str { "Save a name, preference, or habit only when the user explicitly asks Byte to remember it." }
     fn parameter_schema(&self) -> &str { "{\"name\": \"new name\", \"key\": \"preference key\", \"value\": \"preference value\", \"add_habit\": \"habit to add\", \"remove_habit\": \"habit to remove\"}" }
 
     fn parameters_schema(&self) -> serde_json::Value {

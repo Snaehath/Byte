@@ -34,16 +34,11 @@ pub struct ByteMemory {
 
 impl Default for ByteMemory {
     fn default() -> Self {
-        let mut preferences = HashMap::new();
-        preferences.insert("theme".to_string(), "dark".to_string());
-        preferences.insert("coding_style".to_string(), "functional, clean, TypeScript/Rust".to_string());
-        preferences.insert("daily_greeting".to_string(), "Good morning, happy coding!".to_string());
-
         Self {
             user_profile: UserProfile {
-                name: "Developer".to_string(),
-                preferences,
-                habits: vec!["developing cool software".to_string(), "working in terminal".to_string()],
+                name: String::new(),
+                preferences: HashMap::new(),
+                habits: Vec::new(),
             },
             scheduled_reminders: Vec::new(),
             recent_conversation: Vec::new(),
@@ -58,7 +53,25 @@ impl ByteMemory {
         let storage = JsonFileStorage::default();
         let mut mem = storage.load().unwrap_or_default();
         mem.sanitize_recent_turns();
+        mem.remove_placeholder_profile_values();
         mem
+    }
+
+    fn remove_placeholder_profile_values(&mut self) {
+        if self.user_profile.name == "Developer" {
+            self.user_profile.name.clear();
+        }
+        self.user_profile.preferences.retain(|key, value| {
+            !matches!(
+                (key.as_str(), value.as_str()),
+                ("theme", "dark")
+                    | ("coding_style", "functional, clean, TypeScript/Rust")
+                    | ("daily_greeting", "Good morning, happy coding!")
+            )
+        });
+        self.user_profile.habits.retain(|habit| {
+            habit != "developing cool software" && habit != "working in terminal"
+        });
     }
 
     /// Guarantee that stored history only contains complete user-assistant pairs

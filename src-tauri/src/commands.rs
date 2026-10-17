@@ -98,19 +98,39 @@ pub fn stop_action(state: State<'_, AppState>, app_handle: tauri::AppHandle) -> 
 }
 
 #[tauri::command]
-pub fn reposition_presence(window: tauri::WebviewWindow) -> Result<(), String> {
-    crate::presence::PlacementEngine::position_window(&window, crate::presence::Anchor::BottomRight)
+pub async fn reposition_presence(window: tauri::WebviewWindow, current_mode: String) -> Result<String, String> {
+    let desktop_foreground = crate::platform::windows::foreground_is_desktop()
+        .unwrap_or(current_mode != "corner");
+    let (anchor, mode) = if desktop_foreground {
+        (crate::presence::Anchor::Center, "center")
+    } else {
+        (crate::presence::Anchor::BottomRight, "corner")
+    };
+    crate::presence::PlacementEngine::position_window_smooth(&window, anchor).await?;
+    Ok(mode.to_string())
 }
 
 #[tauri::command]
-pub fn set_conversation_window_size(window: tauri::WebviewWindow, expanded: bool) -> Result<(), String> {
+pub fn set_conversation_window_size(
+    window: tauri::WebviewWindow,
+    expanded: bool,
+    placement_mode: String,
+) -> Result<(), String> {
     let size = if expanded {
-        tauri::LogicalSize::new(380.0, 570.0)
+        tauri::LogicalSize::new(380.0, 370.0)
     } else {
         tauri::LogicalSize::new(220.0, 220.0)
     };
     window.set_size(size).map_err(|e| format!("Failed to resize Byte: {}", e))?;
-    crate::presence::PlacementEngine::position_window(&window, crate::presence::Anchor::BottomRight)
+    let anchor = match placement_mode.as_str() {
+        "center" => Some(crate::presence::Anchor::Center),
+        "corner" => Some(crate::presence::Anchor::BottomRight),
+        _ => None,
+    };
+    if let Some(anchor) = anchor {
+        crate::presence::PlacementEngine::position_window(&window, anchor)?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -240,6 +260,7 @@ fn is_interaction_valid(ctx: &InteractionContext, state: &AppState) -> bool {
 
 /// Helper: Sanitize conversation history to only retain completed user/assistant pairs.
 /// Enforces strict alternation (user -> assistant) and guarantees history always ends with an assistant message.
+#[cfg(test)]
 fn sanitize_conversation_history(history: &[crate::memory::ConversationTurn]) -> Vec<ChatMessage> {
     let mut result = Vec::new();
 
@@ -578,12 +599,20 @@ async fn run_interaction(
 
         let current_time_str = chrono::Local::now().format("%A, %B %d, %Y %I:%M %p").to_string();
         let is_greeting = prompts::is_simple_greeting(&transcription);
-        let user_name = state.memory.lock().map(|m| m.user_profile.name.clone()).unwrap_or_else(|_| "Developer".to_string());
         let active_window = if is_greeting { String::new() } else { get_active_window_title() };
 
-        // Tier 2: Only inject preferences/habits if user utterance asks for them (e.g. "my usual...", "my favorite...")
+        // Only load saved preferences when the current message clearly asks for them.
         let trans_lower = transcription.to_lowercase();
-        let relevant_memory = if !is_greeting && (trans_lower.contains("usual") || trans_lower.contains("favorite") || trans_lower.contains("preference") || trans_lower.contains("habit")) {
+        let asks_for_saved_preferences = [
+            "my usual",
+            "my favorite",
+            "my preference",
+            "my habit",
+            "what do you remember about my",
+        ]
+        .iter()
+        .any(|phrase| trans_lower.contains(phrase));
+        let relevant_memory = if !is_greeting && asks_for_saved_preferences {
             state.memory.lock().ok().map(|m| {
                 m.user_profile.preferences.iter()
                     .map(|(k, v)| format!("- {}: {}", k, v))
@@ -597,7 +626,6 @@ async fn run_interaction(
         // Build minimum sufficient system instructions
         let system_instructions = prompts::build_system_prompt(
             &current_time_str,
-            &user_name,
             &active_window,
             is_greeting,
             relevant_memory.as_deref(),
@@ -609,16 +637,8 @@ async fn run_interaction(
             content: system_instructions,
         });
 
-        // Tier 3: Only inject historical conversation context if current turn is not a simple greeting
-        if !is_greeting {
-            if let Ok(mem) = state.memory.lock() {
-                for turn in sanitize_conversation_history(&mem.recent_conversation) {
-                    messages.push(turn);
-                }
-            }
-        }
-
-        // Tier 4: Current user utterance is always the definitive final user message
+        // Each request starts with only the current message. Past conversations
+        // are saved for user review, never silently reintroduced as context.
         messages.push(ChatMessage {
             role: "user".to_string(),
             content: transcription.clone(),
@@ -800,45 +820,6 @@ async fn run_interaction(
     log::info!("Conversation intent resolved: {:?} (auto_listen: {})", intent, auto_listen);
 
     let is_farewell = intent == crate::core::ConversationIntent::Farewell;
-
-    // Record turn in persistent memory as an atomic completed pair (only if interaction is still active, valid, and response is non-empty)
-    if is_interaction_valid(&context, &state) && !transcription.trim().is_empty() && !response_text.trim().is_empty() {
-        if let Ok(mut mem) = state.memory.lock() {
-            mem.recent_conversation.push(crate::memory::ConversationTurn {
-                role: "user".to_string(),
-                message: transcription.clone(),
-            });
-            mem.recent_conversation.push(crate::memory::ConversationTurn {
-                role: "assistant".to_string(),
-                message: response_text.clone(),
-            });
-            // Keep recent turns even (pairs only) and bounded to last 10 items (5 completed pairs)
-            let cur_len = mem.recent_conversation.len();
-            if cur_len > 10 {
-                let excess = cur_len - 10;
-                let excess_even = if excess % 2 != 0 { excess + 1 } else { excess };
-                let drain_count = excess_even.min(cur_len);
-                mem.recent_conversation.drain(0..drain_count);
-            }
-            let _ = mem.save();
-        }
-    }
-
-    if text_mode {
-        state.presence.set_state(&window, PresenceState::Idle);
-        state.is_interacting.store(false, Ordering::SeqCst);
-        if let Ok(mut active) = state.active_interaction.lock() {
-            if active.as_ref().map(|current| current.id) == Some(context.id) {
-                active.take();
-            }
-        }
-        return Ok(ProcessResult {
-            transcription,
-            thinking: assistant_resp.thinking,
-            response: response_text,
-            auto_listen: false,
-        });
-    }
 
     // 7. TTS synthesis and audio playback
     let text_to_speak = response_text.clone();
