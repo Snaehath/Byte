@@ -38,6 +38,7 @@ impl OllamaProvider {
             tools,
             self.temperature,
             &self.reasoning_effort,
+            true,
         ).await
     }
 }

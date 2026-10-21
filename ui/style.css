@@ -100,6 +100,20 @@ html, body {
   -webkit-backdrop-filter: blur(12px);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
   transition: all 0.3s ease;
+  opacity: 0;
+  transform: translateY(3px);
+  pointer-events: none;
+}
+
+.presence-widget:hover .status-badge,
+.status-badge:focus-within,
+.status-badge.listening,
+.status-badge.thinking,
+.status-badge.speaking,
+.status-badge.cancelled,
+.status-badge.error {
+  opacity: 1;
+  transform: translateY(0);
   pointer-events: auto;
 }
 
@@ -111,7 +125,7 @@ html, body {
   background: transparent;
   color: rgba(218, 224, 238, 0.7);
   font: inherit;
-  font-size: 9px;
+  font-size: 11px;
   cursor: pointer;
   pointer-events: auto;
   transition: color 0.2s ease, background 0.2s ease;
@@ -126,9 +140,28 @@ html, body {
   background: transparent;
   color: rgba(218, 224, 238, 0.7);
   font: inherit;
-  font-size: 9px;
+  font-size: 12px;
   cursor: pointer;
   pointer-events: auto;
+}
+
+.model-settings-toggle {
+  margin: 0;
+  padding: 2px 5px;
+  border: 0;
+  border-left: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: transparent;
+  color: rgba(218, 224, 238, 0.7);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.model-settings-toggle:hover {
+  color: var(--text-main);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .text-toggle:hover {
@@ -137,6 +170,7 @@ html, body {
 }
 
 .text-toggle:focus-visible,
+.model-settings-toggle:focus-visible,
 #text-close:focus-visible,
 #text-send:focus-visible,
 #text-input:focus-visible {
@@ -197,7 +231,9 @@ html, body {
 }
 
 #text-close,
-#text-send {
+#text-send,
+#model-setup-close,
+#model-setup-save {
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.07);
@@ -206,6 +242,13 @@ html, body {
 }
 
 #text-close {
+  width: 24px;
+  height: 24px;
+  font-size: 17px;
+  line-height: 1;
+}
+
+#model-setup-close {
   width: 24px;
   height: 24px;
   font-size: 17px;
@@ -254,9 +297,91 @@ html, body {
   cursor: wait;
 }
 
+.model-setup-panel {
+  height: 340px;
+}
+
+.model-setup-form,
+.model-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-height: 0;
+}
+
+.model-setup-form {
+  flex: 1;
+  margin-top: 7px;
+}
+
+.model-fields[hidden] {
+  display: none;
+}
+
+.model-setup-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.model-setup-form input,
+.model-setup-form select {
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.22);
+  color: var(--text-main);
+  font: inherit;
+  font-size: 11px;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.model-setup-form select option {
+  color: #151820;
+}
+
+.model-privacy,
+.model-key-note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+.optional-label {
+  font-size: 9px;
+  opacity: 0.8;
+}
+
+.model-setup-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: auto;
+  min-height: 28px;
+}
+
+#model-setup-feedback {
+  flex: 1;
+  color: var(--text-muted);
+  font-size: 9px;
+  overflow-wrap: anywhere;
+}
+
+#model-setup-save {
+  padding: 5px 10px;
+  background: rgba(108, 92, 231, 0.32);
+}
+
 body.text-open {
   width: 380px;
-  height: 570px;
+  height: 370px;
   align-items: stretch;
   justify-content: flex-start;
 }
@@ -270,6 +395,25 @@ body.text-open .presence-widget {
 }
 
 body.text-open .conversation-panel {
+  display: flex;
+}
+
+body.model-setup-open {
+  width: 380px;
+  height: 570px;
+  align-items: stretch;
+  justify-content: flex-start;
+}
+
+body.model-setup-open .presence-widget {
+  position: absolute;
+  top: 0;
+  left: 80px;
+  width: 220px;
+  height: 220px;
+}
+
+body.model-setup-open .model-setup-panel {
   display: flex;
 }
 
@@ -304,6 +448,7 @@ body.text-open .conversation-panel {
   .status-badge,
   .wake-toggle,
   .text-toggle,
+  .model-settings-toggle,
   .conversation-panel,
   #status-text {
     transition-duration: 0.01ms;

@@ -5,9 +5,14 @@ use crate::config::paths::BytePaths;
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
 pub struct LlmConfig {
+    pub provider: String,
     pub ollama_url: String,        // default "http://localhost:11434/v1/chat/completions"
     pub ollama_model: String,      // default "granite4.2:3b"
     pub vision_model: String,
+    pub cloud_url: String,
+    pub cloud_model: String,
+    pub cloud_vision_model: String,
+    pub setup_complete: bool,
     pub reasoning_effort: String,  // "low" for Granite fast answering
     pub temperature: f32,
     pub max_tokens: u32,
@@ -16,9 +21,14 @@ pub struct LlmConfig {
 impl Default for LlmConfig {
     fn default() -> Self {
         Self {
+            provider: "ollama".to_string(),
             ollama_url: "http://localhost:11434/v1/chat/completions".to_string(),
             ollama_model: "granite4.2:3b".to_string(),
             vision_model: "llava".to_string(),
+            cloud_url: "https://api.openai.com/v1/chat/completions".to_string(),
+            cloud_model: String::new(),
+            cloud_vision_model: String::new(),
+            setup_complete: false,
             reasoning_effort: "low".to_string(),
             temperature: 0.2,
             max_tokens: 1024,

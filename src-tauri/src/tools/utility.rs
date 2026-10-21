@@ -7,7 +7,6 @@ pub struct SetTimerTool;
 impl DesktopTool for SetTimerTool {
     fn name(&self) -> &str { "set_timer" }
     fn description(&self) -> &str { "Set a reminder or timer for a specified duration in seconds." }
-    fn parameter_schema(&self) -> &str { "{\"duration_seconds\": number, \"label\": \"reminder label\"}" }
     fn parameters_schema(&self) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
@@ -73,7 +72,6 @@ pub struct ShowNotificationTool;
 impl DesktopTool for ShowNotificationTool {
     fn name(&self) -> &str { "show_notification" }
     fn description(&self) -> &str { "Display a native Windows notification balloon tip." }
-    fn parameter_schema(&self) -> &str { "{\"title\": \"notification title\", \"message\": \"notification message\"}" }
 
     fn execute<'a>(
         &self,

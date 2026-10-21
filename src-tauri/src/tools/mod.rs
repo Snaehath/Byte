@@ -71,9 +71,6 @@ pub enum ToolRiskLevel {
 pub trait DesktopTool: Send + Sync {
     fn name(&self) -> &str;
     fn description(&self) -> &str;
-    fn parameter_schema(&self) -> &str {
-        "{}"
-    }
     fn parameters_schema(&self) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
@@ -138,18 +135,6 @@ impl ToolRegistry {
         tools
     }
 
-    pub fn get_instructions_prompt(&self) -> String {
-        let mut prompt = String::new();
-        let mut sorted_keys: Vec<&&str> = self.tools.keys().collect();
-        sorted_keys.sort();
-        for key in sorted_keys {
-            if let Some(tool) = self.tools.get(*key) {
-                prompt.push_str(&format!("- `{{\"tool\": \"{}\", \"parameters\": {}}}` ({})\n", tool.name(), tool.parameter_schema(), tool.description()));
-            }
-        }
-        prompt
-    }
-
     pub fn get_tool(&self, name: &str) -> Option<&Box<dyn DesktopTool>> {
         self.tools.get(name)
     }
@@ -178,21 +163,10 @@ impl ToolRegistry {
         confirmed: bool,
     ) -> Result<String, String> {
         self.validate_execution(&tool_call.tool, confirmed)?;
-        let tool = self.tools.get(tool_call.tool.as_str()).unwrap();
+        let tool = self.tools.get(tool_call.tool.as_str())
+            .ok_or_else(|| format!("Unknown tool: {}", tool_call.tool))?;
         tool.execute(&tool_call.parameters, window, client, transcription, state).await
     }
-}
-
-pub async fn handle_tool_call(
-    tool_call: &ToolCall,
-    window: &tauri::WebviewWindow,
-    client: &reqwest::Client,
-    transcription: &str,
-    state: &tauri::State<'_, crate::AppState>,
-) -> Result<String, String> {
-    log::info!("Executing tool call: {:?}", tool_call);
-    let registry = ToolRegistry::new();
-    registry.execute_tool(tool_call, window, client, transcription, state, false).await
 }
 
 pub fn extract_think(text: &str) -> (String, String) {

@@ -2,5 +2,4 @@
 pub enum Capability {
     TextGeneration,
     ToolCalling,
-    Vision,
 }

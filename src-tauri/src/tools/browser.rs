@@ -7,7 +7,6 @@ pub struct OpenUrlTool;
 impl DesktopTool for OpenUrlTool {
     fn name(&self) -> &str { "open_url" }
     fn description(&self) -> &str { "Open a specific URL in the default web browser." }
-    fn parameter_schema(&self) -> &str { "{\"url\": \"https://...\"}" }
     fn parameters_schema(&self) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
@@ -60,7 +59,6 @@ pub struct WebSearchTool;
 impl DesktopTool for WebSearchTool {
     fn name(&self) -> &str { "web_search" }
     fn description(&self) -> &str { "Search the web using DuckDuckGo to find information." }
-    fn parameter_schema(&self) -> &str { "{\"query\": \"search query\"}" }
 
     fn execute<'a>(
         &self,

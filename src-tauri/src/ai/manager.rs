@@ -19,7 +19,7 @@ impl ModelManager {
         Self { config }
     }
 
-    /// Primary execution router for local Ollama with native tool calling support
+    /// Route model requests through local Ollama or an OpenAI-compatible cloud API.
     pub async fn execute(
         &self,
         capability: Capability,
@@ -29,23 +29,41 @@ impl ModelManager {
     ) -> Result<LlmResult, String> {
         match capability {
             Capability::TextGeneration | Capability::ToolCalling => {
-                log::info!(
-                    "ModelManager: Querying local Ollama at {} with model {} (thinking: {})...",
-                    self.config.llm.ollama_url,
-                    self.config.llm.ollama_model,
-                    self.config.llm.reasoning_effort
-                );
-                let provider = OllamaProvider::new(
-                    self.config.llm.ollama_url.clone(),
-                    self.config.llm.ollama_model.clone(),
-                    self.config.llm.reasoning_effort.clone(),
-                    self.config.llm.temperature,
-                );
-                provider.ask(client, messages, tools).await
-            }
-            Capability::Vision => {
-                log::info!("ModelManager: Vision capability requested locally.");
-                Err("Local vision model is not currently active in Ollama. Pull a local vision model (e.g. minicpm-v or llava) to enable local screen analysis.".to_string())
+                if self.config.llm.provider == "cloud" {
+                    let model = self.config.llm.cloud_model.trim();
+                    if model.is_empty() {
+                        return Err("Choose a cloud chat model in Byte's setup.".to_string());
+                    }
+                    let api_key = crate::ai::credentials::cloud_api_key()?
+                        .filter(|key| !key.trim().is_empty())
+                        .ok_or_else(|| "Add a cloud API key in Byte's model setup.".to_string())?;
+                    log::info!("ModelManager: Querying configured cloud model {}.", model);
+                    crate::ai::llm::OpenAiClient::chat_completion(
+                        client,
+                        &self.config.llm.cloud_url,
+                        &api_key,
+                        model,
+                        messages,
+                        tools,
+                        self.config.llm.temperature,
+                        "",
+                        false,
+                    ).await
+                } else {
+                    log::info!(
+                        "ModelManager: Querying local Ollama at {} with model {} (thinking: {})...",
+                        self.config.llm.ollama_url,
+                        self.config.llm.ollama_model,
+                        self.config.llm.reasoning_effort
+                    );
+                    let provider = OllamaProvider::new(
+                        self.config.llm.ollama_url.clone(),
+                        self.config.llm.ollama_model.clone(),
+                        self.config.llm.reasoning_effort.clone(),
+                        self.config.llm.temperature,
+                    );
+                    provider.ask(client, messages, tools).await
+                }
             }
         }
     }

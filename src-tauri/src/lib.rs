@@ -91,8 +91,8 @@ pub fn run() {
             commands::get_system_health,
             commands::reposition_presence,
             commands::set_conversation_window_size,
-            commands::get_app_settings,
-            commands::save_app_settings,
+            commands::get_model_settings,
+            commands::save_model_settings,
             commands::get_memory_snapshot,
             commands::clear_conversation_history,
             commands::reset_saved_memory,
@@ -116,7 +116,7 @@ pub fn run() {
                 log::info!("Microphone:     {} ({})", if report.microphone.available { "✓" } else { "✗" }, report.microphone.details);
                 log::info!("Whisper STT:    {} ({})", if report.whisper_binary.available && report.whisper_model.available { "✓" } else { "✗" }, report.whisper_binary.details);
                 log::info!("Piper TTS:      {} ({})", if report.piper_binary.available && report.piper_model.available { "✓" } else { "✗" }, report.piper_binary.details);
-                log::info!("Ollama Service: {} ({})", if report.ollama_service.available { "✓" } else { "✗" }, report.ollama_service.details);
+                log::info!("Model API:      {} ({})", if report.ollama_service.available { "✓" } else { "✗" }, report.ollama_service.details);
                 log::info!("Overall Ready:  {}", if report.overall_status { "YES ✓" } else { "DEGRADED ⚠️" });
                 log::info!("=====================================");
             });

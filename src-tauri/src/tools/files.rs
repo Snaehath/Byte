@@ -7,7 +7,6 @@ pub struct OpenFolderTool;
 impl DesktopTool for OpenFolderTool {
     fn name(&self) -> &str { "open_folder" }
     fn description(&self) -> &str { "Open a local directory or folder in File Explorer." }
-    fn parameter_schema(&self) -> &str { "{\"path\": \"C:\\\\...\"}" }
     fn parameters_schema(&self) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
@@ -52,9 +51,7 @@ pub struct OrganizeFolderTool;
 impl DesktopTool for OrganizeFolderTool {
     fn name(&self) -> &str { "organize_folder" }
     fn description(&self) -> &str { "Organize files in a directory into sorted subfolders by category." }
-    fn parameter_schema(&self) -> &str { "{\"path\": \"directory path to organize (default: Downloads)\"}" }
     fn risk_level(&self) -> ToolRiskLevel { ToolRiskLevel::Destructive }
-    fn requires_confirmation(&self) -> bool { true }
 
     fn execute<'a>(
         &self,

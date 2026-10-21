@@ -65,28 +65,42 @@ impl HealthChecker {
             details: format!("{}", piper_model_path.display()),
         };
 
-        // 4. Local Ollama LLM
+        // 4. Configured local or cloud model API
         let config = AppConfig::load();
-        let mut ollama_ok = false;
-        let mut ollama_msg = String::new();
-        let service_url = config.llm.ollama_url
-            .trim()
-            .trim_end_matches("/v1/chat/completions")
-            .trim_end_matches('/');
-        if let Ok(res) = client.get(service_url).timeout(std::time::Duration::from_millis(1500)).send().await {
+        let is_cloud = config.llm.provider == "cloud";
+        let endpoint = if is_cloud { &config.llm.cloud_url } else { &config.llm.ollama_url };
+        let service_root = endpoint.trim().trim_end_matches("/v1/chat/completions").trim_end_matches('/');
+        let health_url = if is_cloud { format!("{}/models", service_root) } else { service_root.to_string() };
+        let api_key = if is_cloud {
+            crate::ai::credentials::cloud_api_key().ok().flatten().unwrap_or_default()
+        } else {
+            String::new()
+        };
+        let mut health_request = client.get(&health_url).timeout(std::time::Duration::from_millis(2500));
+        if !api_key.trim().is_empty() {
+            health_request = health_request.bearer_auth(api_key.trim());
+        }
+        let provider_ok = if let Ok(res) = health_request.send().await {
             if res.status().is_success() {
-                ollama_ok = true;
-                ollama_msg = format!("AI service available at {} with model '{}'", service_url, config.llm.ollama_model);
+                true
+            } else {
+                false
             }
-        }
-        if !ollama_ok {
-            ollama_msg = format!("AI service is not responding at {}. Start the configured service and try again.", service_url);
-        }
+        } else { false };
+        let model_name = if is_cloud { &config.llm.cloud_model } else { &config.llm.ollama_model };
+        let provider_name = if is_cloud { "Cloud API" } else { "Ollama" };
+        let provider_details = if provider_ok {
+            format!("{} available at {} with model '{}'", provider_name, service_root, model_name)
+        } else if is_cloud && api_key.trim().is_empty() {
+            "Cloud API key is not configured in Windows Credential Manager.".to_string()
+        } else {
+            format!("{} is not responding at {}. Check the endpoint and try again.", provider_name, service_root)
+        };
 
         let ollama_service = ComponentHealth {
             name: "LLM Provider".to_string(),
-            available: ollama_ok,
-            details: ollama_msg,
+            available: provider_ok,
+            details: provider_details,
         };
 
         // 5. Memory

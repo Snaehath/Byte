@@ -1,6 +1,6 @@
 # Byte
 
-Byte is a Windows desktop voice assistant built with **Rust, Tauri, and HTML, CSS, and JavaScript**. Its floating window centers on an animated orb that reflects the assistant's current state. Click the orb or press **Ctrl+B** to start talking. Click again or press **Escape** to stop or cancel an interaction.
+Byte is a hands-free AI assistant for Windows, built with **Rust, Tauri, HTML, CSS, and JavaScript**. Talk to Byte with the wake word, click the orb, or press **Ctrl+B**. The floating orb shows when Byte is listening, thinking, or speaking; its controls appear when you move the pointer over it.
 
 ## How it works
 
@@ -9,32 +9,32 @@ Byte is a Windows desktop voice assistant built with **Rust, Tauri, and HTML, CS
 3. It sends the request to the configured language model.
 4. It speaks the response using the configured speech engine.
 
-Some interactions can continue by listening for another request. The orb and status label show when Byte is listening, thinking, or speaking. Open **Type a message** to send a written request and hear Byte's reply aloud.
+Some voice interactions continue by listening for another request. You can also open the compact message input and hear Byte's reply aloud.
 
-## Local AI and speech models
+## Local and cloud AI
 
-Byte uses [Ollama](https://ollama.com/download) locally for chat and screen vision. Install Ollama, then pull Byte's default models:
+On first launch, choose a local Ollama model or an OpenAI-compatible cloud API. The choice can be changed later from the small settings icon shown when you hover over the orb. Cloud API keys are stored in Windows Credential Manager; requests are sent to the selected provider.
+
+For local use, install [Ollama](https://ollama.com/download) and pull Byte's default models:
 
 ```powershell
 ollama pull granite4.2:3b
 ollama pull llava
 ```
 
-Byte uses `granite4.2:3b` for chat and `llava` for vision by default. Granite 4.2 is text-only; if you prefer a Granite vision model, pull `granite3.2-vision:2b` and set `llm.vision_model` to that name. For a single model that can handle both text and images, Ollama offers [Ministral 3](https://ollama.com/library/ministral-3):
+Byte uses `granite4.2:3b` for chat and `llava` for vision by default. Granite 4.2 is text-only; `granite3.2-vision:2b` is an alternative vision model. [Ministral 3](https://ollama.com/library/ministral-3) can handle both text and images with one model:
 
 ```powershell
 ollama pull ministral-3:8b
 ```
 
-Set both `llm.ollama_model` and `llm.vision_model` to `ministral-3:8b` in `%APPDATA%\Byte\config\config.json` to use it for both. This model is about 6 GB and its Ollama listing currently requires Ollama 0.13.1.
+Choose `ministral-3:8b` for both chat and vision in Byte's model settings to use it for both. The model download is about 6 GB; its Ollama listing currently requires Ollama 0.13.1. For cloud use, enter the provider's HTTPS endpoint, model name, and API key during setup.
 
 ## Desktop capabilities
 
-Depending on the request and available configuration, Byte can open applications, control windows, organize files, access the clipboard, control audio and media, read system information, show notifications, and analyze the screen. Screen analysis uses the configured Ollama vision model and asks for confirmation before capturing the screen. Byte only saves preferences when asked and does not automatically reuse past conversations.
+Depending on the request and available configuration, Byte can open applications, control windows, organize files, access the clipboard, control audio and media, read system information, show notifications, and analyze the screen. Screen analysis asks for confirmation before capturing the screen and sending it to the selected model provider. Byte only saves preferences when asked and does not automatically reuse past conversations.
 
-The floating widget includes a **Wake word** switch. When enabled, Byte listens for its wake word in the background; switch it off to pause detection. AI and speech model paths are configured in the app config file. The optional first-run spoken greeting is off by default; set `first_run_greeting_enabled` to `true` to enable it before Byte's first launch.
-
-For screen analysis, install a vision model in Ollama and set `llm.vision_model` to its name. Byte's default is `llava`; `ministral-3:8b` can handle both chat and vision when configured for both fields.
+The wake word switch appears on hover and can pause background listening. The optional first-run spoken greeting is off by default; set `first_run_greeting_enabled` to `true` to enable it.
 
 ## Project structure
 
@@ -47,7 +47,7 @@ For screen analysis, install a vision model in Ollama and set `llm.vision_model`
 
 - Windows 10 or 11
 - Rust toolchain
-- Ollama with a configured model
+- Ollama with a configured model for local AI, or an OpenAI-compatible cloud API key
 - Optional: Whisper and Piper executables and model files for local speech processing
 
 ## Run

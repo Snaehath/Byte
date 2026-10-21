@@ -22,15 +22,13 @@
         <canvas id="byte-orb-canvas" width="220" height="175" aria-hidden="true"></canvas>
       </button>
 
-      <!-- Minimal Ambient Presence Status -->
       <div class="status-badge">
         <span id="status-text" role="status" aria-live="polite"></span>
-        <button class="wake-toggle" id="wake-toggle" type="button" aria-pressed="false" aria-busy="true" disabled>
-          Checking wake word…
+        <button class="wake-toggle" id="wake-toggle" type="button" aria-label="Wake word setting is loading" title="Wake word" aria-pressed="false" aria-busy="true" disabled>◉</button>
+        <button class="text-toggle" id="text-toggle" type="button" aria-label="Send a message" title="Send a message" aria-expanded="false">
+          ⌨
         </button>
-        <button class="text-toggle" id="text-toggle" type="button" aria-expanded="false">
-          Type a message
-        </button>
+        <button class="model-settings-toggle" id="model-settings-toggle" type="button" aria-label="Model settings" title="Model settings">⚙</button>
       </div>
     </div>
 
@@ -48,6 +46,38 @@
           </div>
         </form>
       </div>
+    </section>
+
+    <section class="conversation-panel model-setup-panel" id="model-setup-panel" aria-label="AI model setup" hidden>
+      <header class="conversation-header">
+        <span class="conversation-title" id="model-setup-title">Choose how Byte works</span>
+        <button id="model-setup-close" type="button" aria-label="Close model settings">×</button>
+      </header>
+      <form class="model-setup-form" id="model-setup-form">
+        <label>Model type
+          <select id="model-provider">
+            <option value="ollama">Local · Ollama</option>
+            <option value="cloud">Cloud · API</option>
+          </select>
+        </label>
+        <p class="model-privacy" id="model-privacy"></p>
+        <div id="local-model-fields" class="model-fields">
+          <label>Ollama endpoint<input id="ollama-url" type="url" autocomplete="url" required /></label>
+          <label>Chat model<input id="ollama-model" type="text" maxlength="120" required /></label>
+          <label>Vision model<input id="vision-model" type="text" maxlength="120" /></label>
+        </div>
+        <div id="cloud-model-fields" class="model-fields" hidden>
+          <label>API endpoint<input id="cloud-url" type="url" autocomplete="url" /></label>
+          <label>Chat model<input id="cloud-model" type="text" maxlength="120" /></label>
+          <label>Vision model <span class="optional-label">(optional)</span><input id="cloud-vision-model" type="text" maxlength="120" /></label>
+          <label>API key<input id="cloud-api-key" type="password" autocomplete="new-password" placeholder="Paste your provider API key" /></label>
+          <span id="cloud-key-note" class="model-key-note"></span>
+        </div>
+        <div class="model-setup-footer">
+          <span id="model-setup-feedback" role="status" aria-live="polite"></span>
+          <button id="model-setup-save" type="submit">Save</button>
+        </div>
+      </form>
     </section>
 
     <script src="orb.js"></script>

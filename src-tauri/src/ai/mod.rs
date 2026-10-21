@@ -2,6 +2,7 @@ pub mod provider;
 pub mod manager;
 pub mod llm;
 pub mod vision;
+pub mod credentials;
 
 pub use provider::Capability;
 pub use manager::ModelManager;

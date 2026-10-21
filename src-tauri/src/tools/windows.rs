@@ -7,7 +7,6 @@ pub struct WindowControlTool;
 impl DesktopTool for WindowControlTool {
     fn name(&self) -> &str { "window_control" }
     fn description(&self) -> &str { "Minimize, maximize, or close the currently active window." }
-    fn parameter_schema(&self) -> &str { "{\"action\": \"minimize\" | \"maximize\" | \"close\"}" }
     fn parameters_schema(&self) -> serde_json::Value {
         serde_json::json!({
             "type": "object",

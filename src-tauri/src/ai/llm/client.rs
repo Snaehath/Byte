@@ -26,6 +26,7 @@ impl OpenAiClient {
         tools: Option<&[serde_json::Value]>,
         temperature: f32,
         reasoning_effort: &str,
+        ollama_compat: bool,
     ) -> Result<LlmResult, String> {
         let mut req = client
             .post(endpoint_url)
@@ -38,20 +39,20 @@ impl OpenAiClient {
         let mut body = serde_json::json!({
             "model": model,
             "messages": messages,
-            "temperature": temperature,
-            "options": {
-                "temperature": temperature
-            }
+            "temperature": temperature
         });
+
+        if ollama_compat {
+            body["options"] = serde_json::json!({ "temperature": temperature });
+            if !reasoning_effort.is_empty() {
+                body["reasoning_effort"] = serde_json::Value::String(reasoning_effort.to_string());
+            }
+        }
 
         if let Some(tool_list) = tools {
             if !tool_list.is_empty() {
                 body["tools"] = serde_json::Value::Array(tool_list.to_vec());
             }
-        }
-
-        if !reasoning_effort.is_empty() {
-            body["reasoning_effort"] = serde_json::Value::String(reasoning_effort.to_string());
         }
 
         let res = req.json(&body).send().await

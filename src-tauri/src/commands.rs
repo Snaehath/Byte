@@ -1,6 +1,6 @@
 use std::sync::atomic::Ordering;
 use tauri::{State, Emitter, Manager};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use crate::AppState;
 use crate::audio::{self, SpeechService};
 use crate::ai::{Capability, ModelManager};
@@ -25,15 +25,18 @@ pub struct ProcessResult {
     pub auto_listen: bool,
 }
 
-#[derive(Serialize)]
-pub struct AppSettings {
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelSettings {
+    pub provider: String,
     pub ollama_url: String,
     pub ollama_model: String,
     pub vision_model: String,
-    pub whisper_exe: String,
-    pub whisper_model: String,
-    pub piper_exe: String,
-    pub piper_model: String,
+    pub cloud_url: String,
+    pub cloud_model: String,
+    pub cloud_vision_model: String,
+    pub api_key_configured: bool,
+    pub setup_complete: bool,
 }
 
 #[derive(PartialEq, Eq)]
@@ -115,9 +118,10 @@ pub fn set_conversation_window_size(
     window: tauri::WebviewWindow,
     expanded: bool,
     placement_mode: String,
+    setup_panel: bool,
 ) -> Result<(), String> {
     let size = if expanded {
-        tauri::LogicalSize::new(380.0, 370.0)
+        tauri::LogicalSize::new(380.0, if setup_panel { 570.0 } else { 370.0 })
     } else {
         tauri::LogicalSize::new(220.0, 220.0)
     };
@@ -134,70 +138,73 @@ pub fn set_conversation_window_size(
 }
 
 #[tauri::command]
-pub fn get_app_settings() -> AppSettings {
+pub fn get_model_settings() -> Result<ModelSettings, String> {
     let config = crate::config::AppConfig::load();
-    AppSettings {
+    let api_key_configured = crate::ai::credentials::cloud_api_key()?
+        .map(|key| !key.trim().is_empty())
+        .unwrap_or(false);
+    Ok(ModelSettings {
+        provider: config.llm.provider,
         ollama_url: config.llm.ollama_url,
         ollama_model: config.llm.ollama_model,
         vision_model: config.llm.vision_model,
-        whisper_exe: config.speech_tools.whisper_exe,
-        whisper_model: config.speech_tools.whisper_model,
-        piper_exe: config.speech_tools.piper_exe,
-        piper_model: config.speech_tools.piper_model,
-    }
+        cloud_url: config.llm.cloud_url,
+        cloud_model: config.llm.cloud_model,
+        cloud_vision_model: config.llm.cloud_vision_model,
+        api_key_configured,
+        setup_complete: config.llm.setup_complete,
+    })
 }
 
 #[tauri::command]
-pub fn save_app_settings(
-    ollama_url: String,
-    ollama_model: String,
-    vision_model: String,
-    whisper_exe: String,
-    whisper_model: String,
-    piper_exe: String,
-    piper_model: String,
-) -> Result<AppSettings, String> {
-    let ollama_url = ollama_url.trim();
-    let ollama_model = ollama_model.trim();
-    let vision_model = vision_model.trim();
-    let whisper_exe = whisper_exe.trim();
-    let whisper_model = whisper_model.trim();
-    let piper_exe = piper_exe.trim();
-    let piper_model = piper_model.trim();
-    if !(ollama_url.starts_with("http://") || ollama_url.starts_with("https://"))
-        || ollama_url.chars().any(|ch| ch.is_whitespace())
-        || ollama_url.len() > 2048
-    {
-        return Err("Enter a valid HTTP or HTTPS Ollama chat endpoint.".to_string());
+pub fn save_model_settings(settings: ModelSettings, api_key: String) -> Result<ModelSettings, String> {
+    let provider = settings.provider.trim();
+    if provider != "ollama" && provider != "cloud" {
+        return Err("Choose Local Ollama or Cloud API.".to_string());
     }
-    if ollama_model.is_empty() || ollama_model.len() > 120 || vision_model.len() > 120 {
-        return Err("Enter a chat model name, and keep model names under 120 characters.".to_string());
+
+    let endpoint = if provider == "cloud" { settings.cloud_url.trim() } else { settings.ollama_url.trim() };
+    let endpoint_scheme_ok = endpoint.starts_with("https://")
+        || (provider == "ollama" && endpoint.starts_with("http://"));
+    if !endpoint_scheme_ok || endpoint.chars().any(char::is_whitespace) || endpoint.len() > 2048 {
+        return Err(if provider == "cloud" {
+            "Enter a valid HTTPS cloud API endpoint.".to_string()
+        } else {
+            "Enter a valid local Ollama endpoint.".to_string()
+        });
     }
-    if [whisper_exe, whisper_model, piper_exe, piper_model]
-        .iter()
-        .any(|path| path.len() > 2048)
-    {
-        return Err("Speech tool paths must be 2,048 characters or fewer.".to_string());
+
+    let chat_model = if provider == "cloud" { settings.cloud_model.trim() } else { settings.ollama_model.trim() };
+    let vision_model = if provider == "cloud" { settings.cloud_vision_model.trim() } else { settings.vision_model.trim() };
+    if chat_model.is_empty() || chat_model.len() > 120 || vision_model.len() > 120 {
+        return Err("Enter a chat model name under 120 characters.".to_string());
+    }
+    if api_key.len() > 2048 {
+        return Err("The API key is too long.".to_string());
+    }
+    if provider == "cloud" {
+        let already_configured = crate::ai::credentials::cloud_api_key()?
+            .map(|key| !key.trim().is_empty())
+            .unwrap_or(false);
+        if api_key.trim().is_empty() && !already_configured {
+            return Err("Enter an API key for the selected cloud provider.".to_string());
+        }
+        if !api_key.trim().is_empty() {
+            crate::ai::credentials::store_cloud_api_key(api_key.trim())?;
+        }
     }
 
     let mut config = crate::config::AppConfig::load();
-    config.llm.ollama_url = ollama_url.to_string();
-    config.llm.ollama_model = ollama_model.to_string();
-    config.llm.vision_model = vision_model.to_string();
-    config.speech_tools.whisper_exe = whisper_exe.to_string();
-    config.speech_tools.whisper_model = whisper_model.to_string();
-    config.speech_tools.piper_exe = piper_exe.to_string();
-    config.speech_tools.piper_model = piper_model.to_string();
+    config.llm.provider = provider.to_string();
+    config.llm.ollama_url = settings.ollama_url.trim().to_string();
+    config.llm.ollama_model = settings.ollama_model.trim().to_string();
+    config.llm.vision_model = settings.vision_model.trim().to_string();
+    config.llm.cloud_url = settings.cloud_url.trim().to_string();
+    config.llm.cloud_model = settings.cloud_model.trim().to_string();
+    config.llm.cloud_vision_model = settings.cloud_vision_model.trim().to_string();
+    config.llm.setup_complete = true;
     config.save()?;
-    Ok(AppSettings {
-        ollama_url: config.llm.ollama_url,
-        ollama_model: config.llm.ollama_model,
-        vision_model: config.llm.vision_model,
-        whisper_exe: config.speech_tools.whisper_exe,
-        whisper_model: config.speech_tools.whisper_model,
-        piper_exe: config.speech_tools.piper_exe,
-        piper_model: config.speech_tools.piper_model,
-    })
+    get_model_settings()
 }
 
 #[tauri::command]
@@ -645,10 +652,8 @@ async fn run_interaction(
         });
 
         let llm_timer = StageTimer::start();
-        let messages_debug = serde_json::to_string_pretty(&messages)
-            .unwrap_or_else(|_| "<failed to serialize messages>".to_string());
-        log::debug!("LLM prompt messages payload:\n{}", messages_debug);
-        log::info!("Interaction: Querying local model manager with native tools...");
+        log::debug!("LLM request: {} message(s), {} tool(s)", messages.len(), tools_schema.len());
+        log::info!("Interaction: Querying configured model provider with native tools...");
 
     let cancel_llm = context.cancellation.cancelled();
     let llm_fut = model_manager.execute(

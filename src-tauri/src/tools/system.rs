@@ -7,7 +7,6 @@ pub struct SystemControlTool;
 impl DesktopTool for SystemControlTool {
     fn name(&self) -> &str { "system_control" }
     fn description(&self) -> &str { "Adjust system volume, brightness, or media playback tracks." }
-    fn parameter_schema(&self) -> &str { "{\"action\": \"volume_up\" | \"volume_down\" | \"mute\" | \"set_brightness\" | \"play_pause\" | \"next_track\" | \"previous_track\", \"value\": 0-100}" }
     fn parameters_schema(&self) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
@@ -113,7 +112,6 @@ pub struct GetSystemStatsTool;
 impl DesktopTool for GetSystemStatsTool {
     fn name(&self) -> &str { "get_system_stats" }
     fn description(&self) -> &str { "Retrieve current system CPU utilization, RAM usage, and uptime in a single fast call." }
-    fn parameter_schema(&self) -> &str { "{}" }
 
     fn execute<'a>(
         &self,

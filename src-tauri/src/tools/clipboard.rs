@@ -7,7 +7,6 @@ pub struct ClipboardAccessTool;
 impl DesktopTool for ClipboardAccessTool {
     fn name(&self) -> &str { "clipboard_access" }
     fn description(&self) -> &str { "Read the current text from the system clipboard or copy new text to it." }
-    fn parameter_schema(&self) -> &str { "{\"action\": \"read\" | \"write\", \"text\": \"text to copy (optional)\"}" }
     fn parameters_schema(&self) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
