@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Byte</title>
+    <link rel="icon" type="image/png" href="favicon.png" />
     <link rel="stylesheet" href="style.css" />
     <link
       href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600&display=swap"
@@ -63,12 +64,26 @@
         <p class="model-privacy" id="model-privacy"></p>
         <div id="local-model-fields" class="model-fields">
           <label>Ollama endpoint<input id="ollama-url" type="url" autocomplete="url" required /></label>
-          <label>Chat model<input id="ollama-model" type="text" maxlength="120" required /></label>
-          <label>Vision model<input id="vision-model" type="text" maxlength="120" /></label>
+          <label>Chat model
+            <select id="ollama-model" required aria-label="Select an installed Ollama chat model">
+              <option value="">Loading installed models…</option>
+            </select>
+          </label>
+          <div class="ollama-model-actions">
+            <button id="ollama-refresh-models" type="button">Refresh installed models</button>
+            <button id="ollama-pull-model" type="button">Download model</button>
+          </div>
+          <span id="ollama-model-note" class="model-key-note" role="status" aria-live="polite"></span>
+          <label class="same-model-choice"><input id="use-same-model" type="checkbox" /> Use chat model for vision too</label>
+          <p id="same-model-note" class="model-privacy" hidden></p>
+          <label id="local-vision-field">Vision model<input id="vision-model" type="text" maxlength="120" /></label>
+          <label>Model to download<input id="ollama-model-download" type="text" maxlength="120" placeholder="e.g. ministral-3:8b" /></label>
         </div>
         <div id="cloud-model-fields" class="model-fields" hidden>
           <label>API endpoint<input id="cloud-url" type="url" autocomplete="url" /></label>
           <label>Chat model<input id="cloud-model" type="text" maxlength="120" /></label>
+          <label class="same-model-choice"><input id="cloud-use-same-model" type="checkbox" /> Use chat model for vision too</label>
+          <p id="cloud-same-model-note" class="model-privacy" hidden>Choose this only if the cloud model supports images.</p>
           <label>Vision model <span class="optional-label">(optional)</span><input id="cloud-vision-model" type="text" maxlength="120" /></label>
           <label>API key<input id="cloud-api-key" type="password" autocomplete="new-password" placeholder="Paste your provider API key" /></label>
           <span id="cloud-key-note" class="model-key-note"></span>

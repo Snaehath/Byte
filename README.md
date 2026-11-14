@@ -22,7 +22,7 @@ ollama pull granite4.2:3b
 ollama pull llava
 ```
 
-Byte uses `granite4.2:3b` for chat and `llava` for vision by default. Granite 4.2 is text-only; `granite3.2-vision:2b` is an alternative vision model. [Ministral 3](https://ollama.com/library/ministral-3) can handle both text and images with one model:
+Byte detects models installed in Ollama and lets you select one or download another from model settings. Use separate chat and vision models, or enable the same-model option and choose an image-capable model. Byte uses `granite4.2:3b` for chat and `llava` for vision by default. Granite 4.2 is text-only; `granite3.2-vision:2b` is an alternative vision model. [Ministral 3](https://ollama.com/library/ministral-3) can handle both text and images with one model:
 
 ```powershell
 ollama pull ministral-3:8b

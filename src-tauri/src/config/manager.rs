@@ -9,6 +9,7 @@ pub struct LlmConfig {
     pub ollama_url: String,        // default "http://localhost:11434/v1/chat/completions"
     pub ollama_model: String,      // default "granite4.2:3b"
     pub vision_model: String,
+    pub use_same_model: bool,
     pub cloud_url: String,
     pub cloud_model: String,
     pub cloud_vision_model: String,
@@ -25,6 +26,7 @@ impl Default for LlmConfig {
             ollama_url: "http://localhost:11434/v1/chat/completions".to_string(),
             ollama_model: "granite4.2:3b".to_string(),
             vision_model: "llava".to_string(),
+            use_same_model: false,
             cloud_url: "https://api.openai.com/v1/chat/completions".to_string(),
             cloud_model: String::new(),
             cloud_vision_model: String::new(),

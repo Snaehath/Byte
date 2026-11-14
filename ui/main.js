@@ -39,6 +39,15 @@ const modelSetupFeedback = document.getElementById('model-setup-feedback');
 const modelSetupSave = document.getElementById('model-setup-save');
 const cloudKeyInput = document.getElementById('cloud-api-key');
 const cloudKeyNote = document.getElementById('cloud-key-note');
+const sameLocalModel = document.getElementById('use-same-model');
+const sameCloudModel = document.getElementById('cloud-use-same-model');
+const localVisionField = document.getElementById('local-vision-field');
+const sameModelNote = document.getElementById('same-model-note');
+const cloudSameModelNote = document.getElementById('cloud-same-model-note');
+const ollamaModelNote = document.getElementById('ollama-model-note');
+const ollamaRefreshButton = document.getElementById('ollama-refresh-models');
+const ollamaPullButton = document.getElementById('ollama-pull-model');
+const ollamaModelDownload = document.getElementById('ollama-model-download');
 
 const modelInputs = {
   ollamaUrl: document.getElementById('ollama-url'),
@@ -156,27 +165,79 @@ function updateProviderFields() {
   modelInputs.ollamaModel.required = !isCloud;
   modelInputs.cloudUrl.required = isCloud;
   modelInputs.cloudModel.required = isCloud;
+  if (isCloud) sameCloudModel.checked = sameLocalModel.checked;
+  else sameLocalModel.checked = sameCloudModel.checked;
+  localVisionField.hidden = sameLocalModel.checked;
+  modelInputs.cloudVisionModel.required = false;
+  sameModelNote.hidden = isCloud || !sameLocalModel.checked;
+  cloudSameModelNote.hidden = !isCloud || !sameCloudModel.checked;
+  sameModelNote.textContent = 'Choose an installed vision-capable Ollama model, such as ministral-3:8b.';
   modelPrivacy.textContent = isCloud
     ? 'Requests go to your chosen cloud API. Your key is stored in Windows Credential Manager.'
     : 'Requests stay on this device and use your local Ollama service.';
+}
+
+function renderOllamaModels(models, preferred = modelInputs.ollamaModel.value) {
+  const options = models.map((name) => {
+    const option = document.createElement('option');
+    option.value = name;
+    option.textContent = name;
+    return option;
+  });
+  if (preferred && !models.includes(preferred)) {
+    const configured = document.createElement('option');
+    configured.value = preferred;
+    configured.textContent = `${preferred} (not detected)`;
+    options.unshift(configured);
+  }
+  if (!options.length) {
+    const empty = document.createElement('option');
+    empty.value = '';
+    empty.textContent = 'No installed models found';
+    options.push(empty);
+  }
+  modelInputs.ollamaModel.replaceChildren(...options);
+  modelInputs.ollamaModel.value = preferred && options.some((option) => option.value === preferred)
+    ? preferred
+    : models[0] || '';
+  ollamaModelNote.textContent = models.length
+    ? `${models.length} installed model${models.length === 1 ? '' : 's'} found. Select one above.`
+    : 'No models installed yet. Enter a model name below to download one.';
 }
 
 async function loadModelSettings() {
   const settings = await invoke('get_model_settings');
   modelProvider.value = settings.provider;
   modelInputs.ollamaUrl.value = settings.ollamaUrl;
-  modelInputs.ollamaModel.value = settings.ollamaModel;
+  modelInputs.ollamaModel.replaceChildren();
   modelInputs.visionModel.value = settings.visionModel;
   modelInputs.cloudUrl.value = settings.cloudUrl;
   modelInputs.cloudModel.value = settings.cloudModel;
   modelInputs.cloudVisionModel.value = settings.cloudVisionModel;
+  sameLocalModel.checked = settings.useSameModel;
+  sameCloudModel.checked = settings.useSameModel;
   cloudKeyInput.value = '';
   cloudKeyInput.placeholder = settings.apiKeyConfigured ? 'Saved key · leave blank to keep' : 'Paste your provider API key';
   cloudKeyNote.textContent = settings.apiKeyConfigured ? 'A key is saved securely on this PC.' : '';
   modelSetupTitle.textContent = settings.setupComplete ? 'Model settings' : 'Choose how Byte works';
   modelSetupSave.textContent = settings.setupComplete ? 'Save' : 'Get started';
   updateProviderFields();
+  if (settings.provider === 'ollama') await refreshOllamaModels(settings.ollamaModel);
   return settings;
+}
+
+async function refreshOllamaModels(preferred = modelInputs.ollamaModel.value) {
+  ollamaRefreshButton.disabled = true;
+  ollamaModelNote.textContent = 'Checking Ollama…';
+  try {
+    const models = await invoke('list_ollama_models', { ollamaUrl: modelInputs.ollamaUrl.value });
+    renderOllamaModels(models, preferred);
+  } catch (err) {
+    renderOllamaModels([], preferred);
+    ollamaModelNote.textContent = `${err} Enter a model name below to download one.`;
+  } finally {
+    ollamaRefreshButton.disabled = false;
+  }
 }
 
 async function setModelSetupOpen(open) {
@@ -206,7 +267,44 @@ async function setModelSetupOpen(open) {
   }
 }
 
-modelProvider.addEventListener('change', updateProviderFields);
+modelProvider.addEventListener('change', () => {
+  updateProviderFields();
+  if (modelProvider.value === 'ollama') refreshOllamaModels(modelInputs.ollamaModel.value);
+});
+sameLocalModel.addEventListener('change', () => {
+  sameCloudModel.checked = sameLocalModel.checked;
+  updateProviderFields();
+});
+sameCloudModel.addEventListener('change', () => {
+  sameLocalModel.checked = sameCloudModel.checked;
+  updateProviderFields();
+});
+ollamaRefreshButton.addEventListener('click', refreshOllamaModels);
+ollamaPullButton.addEventListener('click', async () => {
+  const model = ollamaModelDownload.value.trim();
+  if (!model) {
+    ollamaModelNote.textContent = 'Enter a model name below, such as ministral-3:8b.';
+    ollamaModelDownload.focus();
+    return;
+  }
+  ollamaPullButton.disabled = true;
+  ollamaRefreshButton.disabled = true;
+  ollamaModelNote.textContent = `Downloading ${model}. Model downloads can be several GB and may take a while…`;
+  try {
+    const models = await invoke('pull_ollama_model', {
+      ollamaUrl: modelInputs.ollamaUrl.value,
+      model,
+    });
+    renderOllamaModels(models, model);
+    ollamaModelDownload.value = '';
+    ollamaModelNote.textContent = `${model} is installed and selected.`;
+  } catch (err) {
+    ollamaModelNote.textContent = String(err);
+  } finally {
+    ollamaPullButton.disabled = false;
+    ollamaRefreshButton.disabled = false;
+  }
+});
 modelSettingsToggle.addEventListener('click', () => setModelSetupOpen(true));
 modelSetupClose.addEventListener('click', () => setModelSetupOpen(false));
 modelSetupForm.addEventListener('submit', async (event) => {
@@ -220,6 +318,7 @@ modelSetupForm.addEventListener('submit', async (event) => {
         ollamaUrl: modelInputs.ollamaUrl.value,
         ollamaModel: modelInputs.ollamaModel.value,
         visionModel: modelInputs.visionModel.value,
+        useSameModel: modelProvider.value === 'cloud' ? sameCloudModel.checked : sameLocalModel.checked,
         cloudUrl: modelInputs.cloudUrl.value,
         cloudModel: modelInputs.cloudModel.value,
         cloudVisionModel: modelInputs.cloudVisionModel.value,

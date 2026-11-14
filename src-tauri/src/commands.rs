@@ -32,6 +32,7 @@ pub struct ModelSettings {
     pub ollama_url: String,
     pub ollama_model: String,
     pub vision_model: String,
+    pub use_same_model: bool,
     pub cloud_url: String,
     pub cloud_model: String,
     pub cloud_vision_model: String,
@@ -121,7 +122,7 @@ pub fn set_conversation_window_size(
     setup_panel: bool,
 ) -> Result<(), String> {
     let size = if expanded {
-        tauri::LogicalSize::new(380.0, if setup_panel { 570.0 } else { 370.0 })
+        tauri::LogicalSize::new(420.0, if setup_panel { 650.0 } else { 370.0 })
     } else {
         tauri::LogicalSize::new(220.0, 220.0)
     };
@@ -148,6 +149,7 @@ pub fn get_model_settings() -> Result<ModelSettings, String> {
         ollama_url: config.llm.ollama_url,
         ollama_model: config.llm.ollama_model,
         vision_model: config.llm.vision_model,
+        use_same_model: config.llm.use_same_model,
         cloud_url: config.llm.cloud_url,
         cloud_model: config.llm.cloud_model,
         cloud_vision_model: config.llm.cloud_vision_model,
@@ -176,7 +178,7 @@ pub fn save_model_settings(settings: ModelSettings, api_key: String) -> Result<M
 
     let chat_model = if provider == "cloud" { settings.cloud_model.trim() } else { settings.ollama_model.trim() };
     let vision_model = if provider == "cloud" { settings.cloud_vision_model.trim() } else { settings.vision_model.trim() };
-    if chat_model.is_empty() || chat_model.len() > 120 || vision_model.len() > 120 {
+    if chat_model.is_empty() || chat_model.len() > 120 || (!settings.use_same_model && vision_model.len() > 120) {
         return Err("Enter a chat model name under 120 characters.".to_string());
     }
     if api_key.len() > 2048 {
@@ -199,12 +201,73 @@ pub fn save_model_settings(settings: ModelSettings, api_key: String) -> Result<M
     config.llm.ollama_url = settings.ollama_url.trim().to_string();
     config.llm.ollama_model = settings.ollama_model.trim().to_string();
     config.llm.vision_model = settings.vision_model.trim().to_string();
+    config.llm.use_same_model = settings.use_same_model;
     config.llm.cloud_url = settings.cloud_url.trim().to_string();
     config.llm.cloud_model = settings.cloud_model.trim().to_string();
     config.llm.cloud_vision_model = settings.cloud_vision_model.trim().to_string();
     config.llm.setup_complete = true;
     config.save()?;
     get_model_settings()
+}
+
+fn ollama_api_root(endpoint: &str) -> Result<String, String> {
+    let mut root = endpoint.trim().trim_end_matches('/').to_string();
+    if root.ends_with("/v1/chat/completions") {
+        root.truncate(root.len() - "/v1/chat/completions".len());
+    } else if root.ends_with("/v1") {
+        root.truncate(root.len() - "/v1".len());
+    }
+    if root.starts_with("http://") || root.starts_with("https://") {
+        Ok(root.trim_end_matches('/').to_string())
+    } else {
+        Err("Enter a valid Ollama endpoint first.".to_string())
+    }
+}
+
+#[derive(Deserialize)]
+struct OllamaTagsResponse {
+    models: Vec<OllamaModelEntry>,
+}
+
+#[derive(Deserialize)]
+struct OllamaModelEntry {
+    name: String,
+}
+
+#[tauri::command]
+pub async fn list_ollama_models(state: State<'_, AppState>, ollama_url: String) -> Result<Vec<String>, String> {
+    let root = ollama_api_root(&ollama_url)?;
+    let response = state.http_client.get(format!("{root}/api/tags"))
+        .timeout(std::time::Duration::from_secs(5))
+        .send().await
+        .map_err(|e| format!("Could not reach Ollama: {e}"))?
+        .error_for_status().map_err(|e| format!("Could not list Ollama models: {e}"))?;
+    let mut result: Vec<String> = response.json::<OllamaTagsResponse>().await
+        .map_err(|e| format!("Ollama returned an invalid model list: {e}"))?
+        .models.into_iter().map(|model| model.name).collect();
+    result.sort_by_key(|name| name.to_lowercase());
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn pull_ollama_model(state: State<'_, AppState>, ollama_url: String, model: String) -> Result<Vec<String>, String> {
+    let model = model.trim();
+    if model.is_empty() || model.len() > 120 || model.chars().any(char::is_whitespace) {
+        return Err("Enter a valid Ollama model name, such as ministral-3:8b.".to_string());
+    }
+    let root = ollama_api_root(&ollama_url)?;
+    let response = state.http_client.post(format!("{root}/api/pull"))
+        .timeout(std::time::Duration::from_secs(2 * 60 * 60))
+        .json(&serde_json::json!({ "name": model, "stream": false }))
+        .send().await
+        .map_err(|e| format!("Could not download the Ollama model: {e}"))?
+        .error_for_status().map_err(|e| format!("Ollama could not download that model: {e}"))?;
+    let body: serde_json::Value = response.json().await
+        .map_err(|e| format!("Ollama returned an invalid download result: {e}"))?;
+    if let Some(error) = body.get("error").and_then(serde_json::Value::as_str) {
+        return Err(format!("Ollama model download failed: {error}"));
+    }
+    list_ollama_models(state, ollama_url).await
 }
 
 #[tauri::command]

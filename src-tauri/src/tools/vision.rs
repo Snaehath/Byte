@@ -34,17 +34,14 @@ impl DesktopTool for AnalyzeScreenTool {
         Box::pin(async move {
             let config = crate::config::AppConfig::load();
             let (endpoint, api_key, model) = if config.llm.provider == "cloud" {
-                let model = if config.llm.cloud_vision_model.trim().is_empty() {
-                    config.llm.cloud_model.trim()
-                } else {
-                    config.llm.cloud_vision_model.trim()
-                };
+                let model = if config.llm.use_same_model { config.llm.cloud_model.trim() } else { config.llm.cloud_vision_model.trim() };
                 let api_key = crate::ai::credentials::cloud_api_key()?
                     .filter(|key| !key.trim().is_empty())
                     .ok_or_else(|| "Add a cloud API key in Byte's model setup.".to_string())?;
                 (config.llm.cloud_url.clone(), api_key, model.to_string())
             } else {
-                (config.llm.ollama_url.clone(), String::new(), config.llm.vision_model.trim().to_string())
+                let model = if config.llm.use_same_model { config.llm.ollama_model.trim() } else { config.llm.vision_model.trim() };
+                (config.llm.ollama_url.clone(), String::new(), model.to_string())
             };
 
             if model.is_empty() {

@@ -93,6 +93,8 @@ pub fn run() {
             commands::set_conversation_window_size,
             commands::get_model_settings,
             commands::save_model_settings,
+            commands::list_ollama_models,
+            commands::pull_ollama_model,
             commands::get_memory_snapshot,
             commands::clear_conversation_history,
             commands::reset_saved_memory,
