@@ -18,10 +18,6 @@ impl Default for WhisperStt {
 }
 
 impl WhisperStt {
-    pub fn new(exe_path: PathBuf, model_path: PathBuf) -> Self {
-        Self { exe_path, model_path }
-    }
-
     pub fn transcribe_with_thread_limit(&self, audio_path: &Path, thread_limit: usize) -> Result<String, String> {
         self.transcribe_with_threads(audio_path, thread_limit.max(1))
     }

@@ -1,70 +1,36 @@
-use crate::ai::provider::Capability;
-use crate::ai::llm::{ChatMessage, LlmResult, OllamaProvider};
+use crate::ai::llm::{self, ChatMessage, LlmResult};
 use crate::config::AppConfig;
 
+/// Sends conversation and tool-calling requests to the fixed local text model.
 pub struct ModelManager {
     config: AppConfig,
 }
 
 impl Default for ModelManager {
     fn default() -> Self {
-        Self {
-            config: AppConfig::load(),
-        }
+        Self { config: AppConfig::load() }
     }
 }
 
 impl ModelManager {
-    pub fn new(config: AppConfig) -> Self {
-        Self { config }
-    }
-
-    /// Route model requests through local Ollama or an OpenAI-compatible cloud API.
-    pub async fn execute(
+    pub async fn chat(
         &self,
-        capability: Capability,
         client: &reqwest::Client,
         messages: &[ChatMessage],
         tools: Option<&[serde_json::Value]>,
     ) -> Result<LlmResult, String> {
-        match capability {
-            Capability::TextGeneration | Capability::ToolCalling => {
-                if self.config.llm.provider == "cloud" {
-                    let model = self.config.llm.cloud_model.trim();
-                    if model.is_empty() {
-                        return Err("Choose a cloud chat model in Byte's setup.".to_string());
-                    }
-                    let api_key = crate::ai::credentials::cloud_api_key()?
-                        .filter(|key| !key.trim().is_empty())
-                        .ok_or_else(|| "Add a cloud API key in Byte's model setup.".to_string())?;
-                    log::info!("ModelManager: Querying configured cloud model {}.", model);
-                    crate::ai::llm::OpenAiClient::chat_completion(
-                        client,
-                        &self.config.llm.cloud_url,
-                        &api_key,
-                        model,
-                        messages,
-                        tools,
-                        self.config.llm.temperature,
-                        "",
-                        false,
-                    ).await
-                } else {
-                    log::info!(
-                        "ModelManager: Querying local Ollama at {} with model {} (thinking: {})...",
-                        self.config.llm.ollama_url,
-                        self.config.llm.ollama_model,
-                        self.config.llm.reasoning_effort
-                    );
-                    let provider = OllamaProvider::new(
-                        self.config.llm.ollama_url.clone(),
-                        self.config.llm.ollama_model.clone(),
-                        self.config.llm.reasoning_effort.clone(),
-                        self.config.llm.temperature,
-                    );
-                    provider.ask(client, messages, tools).await
-                }
-            }
-        }
+        let llm_cfg = &self.config.llm;
+        log::info!("ModelManager: querying {} at {}", llm_cfg.ollama_model, llm_cfg.ollama_url);
+        llm::chat_completion(
+            client,
+            &llm_cfg.ollama_url,
+            &llm_cfg.ollama_model,
+            messages,
+            tools,
+            llm_cfg.temperature,
+            llm_cfg.max_tokens,
+            &llm_cfg.reasoning_effort,
+        )
+        .await
     }
 }

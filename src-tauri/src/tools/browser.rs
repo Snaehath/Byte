@@ -1,19 +1,19 @@
 use std::collections::HashMap;
-use std::process::Command;
-use crate::tools::{DesktopTool, ToolFuture};
+use crate::platform::windows::shell_open;
+use crate::tools::{str_param, DesktopTool, ToolFuture};
 
 pub struct OpenUrlTool;
 
 impl DesktopTool for OpenUrlTool {
     fn name(&self) -> &str { "open_url" }
-    fn description(&self) -> &str { "Open a specific URL in the default web browser." }
+    fn description(&self) -> &str { "Open a website in the default browser, e.g. youtube.com or a full URL." }
     fn parameters_schema(&self) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
                 "url": {
                     "type": "string",
-                    "description": "The URL to open in the browser"
+                    "description": "Website address or well-known site name, e.g. \"github.com\" or \"youtube\""
                 }
             },
             "required": ["url"]
@@ -29,36 +29,69 @@ impl DesktopTool for OpenUrlTool {
         _state: &'a tauri::State<'_, crate::AppState>,
     ) -> ToolFuture<'a> {
         Box::pin(async move {
-            if let Some(url) = params.get("url").and_then(|v| v.as_str()) {
-                let url_clean = url.trim();
-                let final_url = if !url_clean.starts_with("http://") && !url_clean.starts_with("https://") {
-                    let clean_lower = url_clean.to_lowercase();
-                    match clean_lower.as_str() {
-                        "youtube" => "https://www.youtube.com".to_string(),
-                        "google" => "https://www.google.com".to_string(),
-                        "github" => "https://www.github.com".to_string(),
-                        "gmail" => "https://mail.google.com".to_string(),
-                        "reddit" => "https://www.reddit.com".to_string(),
-                        _ => format!("https://{}", url_clean),
-                    }
-                } else {
-                    url_clean.to_string()
-                };
-
-                let _ = Command::new("cmd").args(&["/C", "start", "", &final_url]).spawn();
-                Ok(format!("Opening {} in your browser.", url_clean))
-            } else {
-                Err("URL parameter is missing.".to_string())
-            }
+            let raw = str_param(params, "url").ok_or("Which website should I open?")?;
+            let url = normalize_url(raw)?;
+            shell_open(&url, None)?;
+            Ok(format!("Opening {}.", display_host(&url)))
         })
     }
+}
+
+fn normalize_url(raw: &str) -> Result<String, String> {
+    let lower = raw.to_lowercase();
+    let known = match lower.as_str() {
+        "youtube" => Some("https://www.youtube.com"),
+        "google" => Some("https://www.google.com"),
+        "github" => Some("https://github.com"),
+        "gmail" => Some("https://mail.google.com"),
+        "reddit" => Some("https://www.reddit.com"),
+        "wikipedia" => Some("https://www.wikipedia.org"),
+        _ => None,
+    };
+    if let Some(url) = known {
+        return Ok(url.to_string());
+    }
+    if raw.chars().any(char::is_whitespace) {
+        return Err("That doesn't look like a web address.".to_string());
+    }
+    let url = if lower.starts_with("https://") || lower.starts_with("http://") {
+        raw.to_string()
+    } else if lower.contains("://") {
+        // Only web links; never hand other protocol handlers to the shell.
+        return Err("I can only open web links.".to_string());
+    } else {
+        format!("https://{raw}")
+    };
+    if !url.split("://").nth(1).is_some_and(|rest| rest.split('/').next().is_some_and(|host| host.contains('.'))) {
+        return Err("That doesn't look like a web address.".to_string());
+    }
+    Ok(url)
+}
+
+fn display_host(url: &str) -> &str {
+    url.split("://").nth(1).and_then(|r| r.split('/').next()).unwrap_or(url).trim_start_matches("www.")
 }
 
 pub struct WebSearchTool;
 
 impl DesktopTool for WebSearchTool {
     fn name(&self) -> &str { "web_search" }
-    fn description(&self) -> &str { "Search the web using DuckDuckGo to find information." }
+    fn description(&self) -> &str {
+        "Look up facts on the web. Returns a short summary, or opens search results in the browser when no summary is available."
+    }
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query"
+                }
+            },
+            "required": ["query"]
+        })
+    }
+    fn answer_from_result(&self) -> bool { true }
 
     fn execute<'a>(
         &self,
@@ -69,54 +102,48 @@ impl DesktopTool for WebSearchTool {
         _state: &'a tauri::State<'_, crate::AppState>,
     ) -> ToolFuture<'a> {
         Box::pin(async move {
-            if let Some(query) = params.get("query").and_then(|v| v.as_str()) {
-                let clean_query = query.trim();
-                let encoded = urlencoding::encode(clean_query);
-                let api_url = format!("https://api.duckduckgo.com/?q={}&format=json&no_html=1&skip_disambig=1", encoded);
+            let query = str_param(params, "query").ok_or("What should I search for?")?;
+            let encoded = urlencoding::encode(query);
+            let api_url = format!("https://api.duckduckgo.com/?q={encoded}&format=json&no_html=1&skip_disambig=1");
 
-                let res = client.get(&api_url)
-                    .timeout(std::time::Duration::from_secs(6))
-                    .send()
-                    .await
-                    .map_err(|e| format!("Web search request failed: {}", e))?;
-
-                if let Ok(json_val) = res.json::<serde_json::Value>().await {
-                    let mut summary = String::new();
-                    if let Some(abstract_text) = json_val.get("AbstractText").and_then(|v| v.as_str()) {
-                        if !abstract_text.trim().is_empty() {
-                            summary = abstract_text.to_string();
-                        }
-                    }
-
-                    if summary.is_empty() {
-                        if let Some(related) = json_val.get("RelatedTopics").and_then(|v| v.as_array()) {
-                            for item in related {
-                                if let Some(txt) = item.get("Text").and_then(|v| v.as_str()) {
-                                    if !txt.trim().is_empty() {
-                                        summary = txt.to_string();
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if !summary.is_empty() {
-                        Ok(format!("According to the web: {}", summary))
-                    } else {
-                        // Open search results in browser as fallback
-                        let search_url = format!("https://duckduckgo.com/?q={}", encoded);
-                        let _ = Command::new("cmd").args(&["/C", "start", "", &search_url]).spawn();
-                        Ok(format!("I opened search results for '{}' in your browser.", clean_query))
-                    }
-                } else {
-                    let search_url = format!("https://duckduckgo.com/?q={}", encoded);
-                    let _ = Command::new("cmd").args(&["/C", "start", "", &search_url]).spawn();
-                    Ok(format!("Opened search for '{}' in browser.", clean_query))
+            let summary = match client.get(&api_url).timeout(std::time::Duration::from_secs(6)).send().await {
+                Ok(res) => res.json::<serde_json::Value>().await.ok().and_then(|json| instant_answer(&json)),
+                Err(e) => {
+                    log::warn!("web_search: instant answer request failed: {e}");
+                    None
                 }
-            } else {
-                Err("Search query parameter is missing.".to_string())
+            };
+
+            match summary {
+                Some(text) => Ok(format!("Web summary for \"{query}\": {text}")),
+                None => {
+                    shell_open(&format!("https://duckduckgo.com/?q={encoded}"), None)?;
+                    Ok(format!("I opened search results for {query} in your browser."))
+                }
             }
         })
+    }
+}
+
+fn instant_answer(json: &serde_json::Value) -> Option<String> {
+    let non_empty = |v: &serde_json::Value| v.as_str().map(str::trim).filter(|s| !s.is_empty()).map(String::from);
+    json.get("AbstractText").and_then(non_empty)
+        .or_else(|| json.get("Answer").and_then(non_empty))
+        .or_else(|| {
+            json.get("RelatedTopics")?.as_array()?.iter().find_map(|item| item.get("Text").and_then(non_empty))
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_normalize_url() {
+        assert_eq!(normalize_url("youtube").unwrap(), "https://www.youtube.com");
+        assert_eq!(normalize_url("example.com/a?b=1&c=2").unwrap(), "https://example.com/a?b=1&c=2");
+        assert!(normalize_url("file:///C:/Windows").is_err());
+        assert!(normalize_url("not a url").is_err());
+        assert!(normalize_url("localhost").is_err());
     }
 }

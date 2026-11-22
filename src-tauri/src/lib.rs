@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::AtomicBool;
 use std::process::Command as StdCommand;
-use tauri::{Emitter, Manager};
+use tauri::Manager;
 
 pub struct Command;
 
@@ -28,11 +28,11 @@ pub mod platform;
 pub mod diagnostics;
 pub mod presence;
 pub mod commands;
+pub mod tray;
 
-// Re-exports for backwards-compatibility
-pub use memory::{ByteMemory, UserProfile, Reminder, ConversationTurn};
+pub use memory::{ByteMemory, UserProfile, Reminder};
 
-// Managed state for Tauri to share recording, interactions, memory and mood safely across threads
+/// Shared application state.
 pub struct AppState {
     pub is_recording: Arc<AtomicBool>,
     pub recorded_data: Arc<Mutex<Vec<f32>>>,
@@ -41,9 +41,10 @@ pub struct AppState {
     pub wake_word_enabled: Arc<AtomicBool>,
     pub http_client: reqwest::Client,
     pub memory: Arc<Mutex<ByteMemory>>,
-    pub mood: Arc<Mutex<String>>,
-    pub pending_tool_call: Mutex<Option<tools::ToolCall>>,
-    pub pending_tool_transcription: Mutex<Option<String>>,
+    /// A tool call waiting for the user's yes/no, and when it was asked.
+    pub pending_tool_call: Mutex<Option<(tools::ToolCall, std::time::Instant)>>,
+    /// In-memory context for follow-up questions in the current conversation.
+    pub session: Mutex<crate::core::ConversationSession>,
     pub active_interaction: Arc<Mutex<Option<crate::core::InteractionContext>>>,
     pub presence: crate::presence::PresenceManager,
 }
@@ -60,13 +61,14 @@ pub fn run() {
 
     let memory = Arc::new(Mutex::new(ByteMemory::load()));
     let memory_clone = Arc::clone(&memory);
-    let mood = Arc::new(Mutex::new("calm".to_string()));
     let startup_config = crate::config::AppConfig::load();
     let wake_word_enabled = Arc::new(AtomicBool::new(startup_config.wake_word_enabled));
     let first_run_greeting_enabled = startup_config.first_run_greeting_enabled;
     let wake_word_enabled_for_detector = Arc::clone(&wake_word_enabled);
 
     tauri::Builder::default()
+        // A second launch just brings the running Byte forward.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| tray::reveal(app)))
         .manage(AppState {
             is_recording: is_recording_clone,
             recorded_data: Arc::new(Mutex::new(Vec::new())),
@@ -78,9 +80,8 @@ pub fn run() {
                 .build()
                 .unwrap(),
             memory,
-            mood,
             pending_tool_call: Mutex::new(None),
-            pending_tool_transcription: Mutex::new(None),
+            session: Mutex::new(Default::default()),
             active_interaction: Arc::new(Mutex::new(None)),
             presence: crate::presence::PresenceManager::new(),
         })
@@ -88,19 +89,23 @@ pub fn run() {
             commands::start_interaction,
             commands::start_text_interaction,
             commands::stop_action,
-            commands::get_system_health,
             commands::reposition_presence,
             commands::set_conversation_window_size,
             commands::get_model_settings,
             commands::save_model_settings,
-            commands::list_ollama_models,
+            commands::get_model_status,
             commands::pull_ollama_model,
-            commands::get_memory_snapshot,
-            commands::clear_conversation_history,
             commands::reset_saved_memory,
             commands::get_wake_word_enabled,
             commands::set_wake_word_enabled
         ])
+        // Closing the window (e.g. Alt+F4) keeps Byte running in the tray.
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
         .setup(move |app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -109,6 +114,8 @@ pub fn run() {
                         .build(),
                 )?;
             }
+
+            tray::setup(app.handle())?;
 
             // Silently verify subsystem health on startup (Whisper, Piper, Ollama, Mic)
             let http_client = app.state::<AppState>().http_client.clone();
@@ -124,7 +131,6 @@ pub fn run() {
             });
 
             // Spawn proactive background cognitive loop for scheduled reminders
-            let app_handle_for_loop = app.handle().clone();
             let memory_for_loop = Arc::clone(&memory_clone);
             tauri::async_runtime::spawn(async move {
                 loop {
@@ -153,19 +159,9 @@ pub fn run() {
                     }
 
                     for reminder in to_trigger {
-                        log::info!("Proactive background loop: Triggering reminder: {}", reminder.label);
-                        let text = format!("Reminder: {}", reminder.label);
-                        let window_opt = app_handle_for_loop.get_webview_window("main");
-
-                        std::thread::spawn(move || {
-                            if let Some(ref w) = window_opt {
-                                let _ = w.emit::<String>("speaking", "excited".to_string());
-                            }
-                            audio::speak_text(&text);
-                            if let Some(ref w) = window_opt {
-                                let _ = w.emit::<String>("speaking", "calm".to_string());
-                            }
-                        });
+                        log::info!("Reminder due: {}", reminder.label);
+                        let _ = crate::tools::utility::show_notification("Byte reminder", &reminder.label);
+                        std::thread::spawn(move || audio::speak_text(&format!("Reminder: {}", reminder.label)));
                     }
                 }
             });

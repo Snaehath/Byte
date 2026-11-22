@@ -1,5 +1,4 @@
 pub mod piper;
-pub mod mars6;
 
 use std::path::Path;
 
@@ -8,7 +7,6 @@ pub trait TextToSpeech: Send + Sync {
 }
 
 pub use piper::PiperTts;
-pub use mars6::Mars6Tts;
 
 /// Applies technical acronym pronunciation phonetic rules for TTS
 pub fn apply_pronunciation_rules(text: &str) -> String {

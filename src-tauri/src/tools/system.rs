@@ -1,24 +1,23 @@
 use std::collections::HashMap;
-use std::process::Command;
-use crate::tools::{DesktopTool, ToolFuture, coerce_to_u64};
+use crate::platform::windows::{press_key, vk};
+use crate::tools::{coerce_to_u64, str_param, DesktopTool, ToolFuture};
 
 pub struct SystemControlTool;
 
 impl DesktopTool for SystemControlTool {
     fn name(&self) -> &str { "system_control" }
-    fn description(&self) -> &str { "Adjust system volume, brightness, or media playback tracks." }
+    fn description(&self) -> &str { "Change volume, mute, screen brightness, or control media playback (play/pause, next, previous)." }
     fn parameters_schema(&self) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["volume_up", "volume_down", "mute", "set_brightness", "play_pause", "next_track", "previous_track"],
-                    "description": "System control action to perform"
+                    "enum": ["volume_up", "volume_down", "mute", "set_brightness", "play_pause", "next_track", "previous_track"]
                 },
                 "value": {
                     "type": "integer",
-                    "description": "Optional numeric value from 0 to 100 (for brightness)"
+                    "description": "Brightness percent 0-100 for set_brightness"
                 }
             },
             "required": ["action"]
@@ -34,76 +33,54 @@ impl DesktopTool for SystemControlTool {
         _state: &'a tauri::State<'_, crate::AppState>,
     ) -> ToolFuture<'a> {
         Box::pin(async move {
-            if let Some(action) = params.get("action").and_then(|v| v.as_str()) {
-                match action {
-                    "volume_up" => {
-                        let _ = Command::new("powershell")
-                            .args(&["-Command", "for ($i=0; $i -lt 5; $i++) { (New-Object -ComObject Wscript.Shell).SendKeys([char]175) }"])
-                            .spawn();
-                        Ok("Volume turned up.".to_string())
-                    }
-                    "volume_down" => {
-                        let _ = Command::new("powershell")
-                            .args(&["-Command", "for ($i=0; $i -lt 5; $i++) { (New-Object -ComObject Wscript.Shell).SendKeys([char]174) }"])
-                            .spawn();
-                        Ok("Volume turned down.".to_string())
-                    }
-                    "mute" => {
-                        let _ = Command::new("powershell")
-                            .args(&["-Command", "(New-Object -ComObject Wscript.Shell).SendKeys([char]173)"])
-                            .spawn();
-                        Ok("Toggled volume mute.".to_string())
-                    }
-                    "set_brightness" => {
-                        let brightness = params.get("value")
-                            .and_then(coerce_to_u64)
-                            .unwrap_or(50);
-                        let cmd_str = format!("(Get-WmiObject -Namespace root/WMI -Class WmiMonitorBrightnessMethods).WmiSetBrightness(1, {})", brightness);
-                        let _ = Command::new("powershell")
-                            .args(&["-Command", &cmd_str])
-                            .spawn();
-                        Ok(format!("Brightness set to {}%.", brightness))
-                    }
-                    "play_pause" => {
-                        let _ = Command::new("powershell")
-                            .args(&["-Command", "(New-Object -ComObject Wscript.Shell).SendKeys([char]179)"])
-                            .spawn();
-                        Ok("Toggled media playback.".to_string())
-                    }
-                    "next_track" => {
-                        let _ = Command::new("powershell")
-                            .args(&["-Command", "(New-Object -ComObject Wscript.Shell).SendKeys([char]176)"])
-                            .spawn();
-                        Ok("Playing next track.".to_string())
-                    }
-                    "previous_track" => {
-                        let _ = Command::new("powershell")
-                            .args(&["-Command", "(New-Object -ComObject Wscript.Shell).SendKeys([char]177)"])
-                            .spawn();
-                        Ok("Playing previous track.".to_string())
-                    }
-                    _ => Err(format!("Unknown system control action: {}", action)),
+            let action = str_param(params, "action").ok_or("What should I change?")?;
+            // Each volume key press moves Windows volume by 2%.
+            match action {
+                "volume_up" => { press_key(vk::VOLUME_UP, 5); Ok("Volume up.".to_string()) }
+                "volume_down" => { press_key(vk::VOLUME_DOWN, 5); Ok("Volume down.".to_string()) }
+                "mute" => { press_key(vk::VOLUME_MUTE, 1); Ok("Toggled mute.".to_string()) }
+                "play_pause" => { press_key(vk::MEDIA_PLAY_PAUSE, 1); Ok("Done.".to_string()) }
+                "next_track" => { press_key(vk::MEDIA_NEXT, 1); Ok("Next track.".to_string()) }
+                "previous_track" => { press_key(vk::MEDIA_PREV, 1); Ok("Previous track.".to_string()) }
+                "set_brightness" => {
+                    let level = params.get("value").and_then(coerce_to_u64)
+                        .ok_or("What brightness level, from 0 to 100?")?
+                        .min(100);
+                    set_brightness(level).await?;
+                    Ok(format!("Brightness set to {level} percent."))
                 }
-            } else {
-                Err("System control action parameter is missing.".to_string())
+                other => Err(format!("Unknown system action: {other}")),
             }
         })
     }
 }
 
+async fn set_brightness(level: u64) -> Result<(), String> {
+    let script = format!(
+        "(Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightnessMethods -ErrorAction Stop | Select-Object -First 1 | Invoke-CimMethod -MethodName WmiSetBrightness -Arguments @{{Timeout=1; Brightness={level}}}) | Out-Null"
+    );
+    let output = tokio::task::spawn_blocking(move || {
+        crate::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .output()
+    })
+    .await
+    .map_err(|e| format!("Brightness task failed: {e}"))?
+    .map_err(|e| format!("Couldn't run brightness command: {e}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err("This display doesn't support brightness control from Windows.".to_string())
+    }
+}
+
 #[derive(serde::Deserialize, Debug, Default)]
 struct RawSystemStats {
-    #[serde(default)]
     cpu: Option<u64>,
-    #[serde(default)]
     free: Option<u64>,
-    #[serde(default)]
     total: Option<u64>,
-    #[serde(default)]
     days: Option<u64>,
-    #[serde(default)]
     hours: Option<u64>,
-    #[serde(default)]
     minutes: Option<u64>,
 }
 
@@ -111,7 +88,8 @@ pub struct GetSystemStatsTool;
 
 impl DesktopTool for GetSystemStatsTool {
     fn name(&self) -> &str { "get_system_stats" }
-    fn description(&self) -> &str { "Retrieve current system CPU utilization, RAM usage, and uptime in a single fast call." }
+    fn description(&self) -> &str { "Get current CPU usage, memory (RAM) usage, and system uptime." }
+    fn answer_from_result(&self) -> bool { true }
 
     fn execute<'a>(
         &self,
@@ -122,39 +100,41 @@ impl DesktopTool for GetSystemStatsTool {
         _state: &'a tauri::State<'_, crate::AppState>,
     ) -> ToolFuture<'a> {
         Box::pin(async move {
-            let stats = tokio::task::spawn_blocking(move || {
-                let ps_script = r#"$cpu = (Get-CimInstance Win32_Processor).LoadPercentage; $os = Get-CimInstance Win32_OperatingSystem; $up = (Get-Date) - $os.LastBootUpTime; @{ cpu = $cpu; free = $os.FreePhysicalMemory; total = $os.TotalVisibleMemorySize; days = [int]$up.Days; hours = [int]$up.Hours; minutes = [int]$up.Minutes } | ConvertTo-Json -Compress"#;
-                let output = Command::new("powershell")
-                    .args(&["-NoProfile", "-NonInteractive", "-Command", ps_script])
-                    .output();
+            let stats = tokio::task::spawn_blocking(|| {
+                let script = r#"$cpu = (Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average; $os = Get-CimInstance Win32_OperatingSystem; $up = (Get-Date) - $os.LastBootUpTime; @{ cpu = [int]$cpu; free = $os.FreePhysicalMemory; total = $os.TotalVisibleMemorySize; days = [int]$up.Days; hours = [int]$up.Hours; minutes = [int]$up.Minutes } | ConvertTo-Json -Compress"#;
+                crate::Command::new("powershell")
+                    .args(["-NoProfile", "-NonInteractive", "-Command", script])
+                    .output()
+                    .ok()
+                    .filter(|out| out.status.success())
+                    .and_then(|out| serde_json::from_slice::<RawSystemStats>(&out.stdout).ok())
+                    .unwrap_or_default()
+            })
+            .await
+            .map_err(|e| format!("System stats task failed: {e}"))?;
 
-                match output {
-                    Ok(out) if out.status.success() => {
-                        let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                        serde_json::from_str::<RawSystemStats>(&stdout).unwrap_or_default()
-                    }
-                    _ => RawSystemStats::default(),
-                }
-            }).await.map_err(|e| format!("System stats task failed: {}", e))?;
-
-            let cpu_pct = stats.cpu.map(|c| c.to_string()).unwrap_or_else(|| "unknown".to_string());
-            let ram_info = match (stats.free, stats.total) {
-                (Some(free), Some(total)) if total > 0 => {
+            let mut parts = Vec::new();
+            if let Some(cpu) = stats.cpu {
+                parts.push(format!("CPU {cpu}%"));
+            }
+            if let (Some(free), Some(total)) = (stats.free, stats.total) {
+                if total > 0 {
                     let used = total.saturating_sub(free);
-                    let percent = (used as f64 / total as f64) * 100.0;
-                    format!("{:.1}% ({:.1} GB used out of {:.1} GB)", percent, used as f64 / 1048576.0, total as f64 / 1048576.0)
+                    parts.push(format!(
+                        "RAM {:.0}% ({:.1} of {:.1} GB used)",
+                        used as f64 / total as f64 * 100.0,
+                        used as f64 / 1_048_576.0,
+                        total as f64 / 1_048_576.0
+                    ));
                 }
-                _ => "unknown".to_string(),
-            };
-            let uptime_info = match (stats.days, stats.hours, stats.minutes) {
-                (Some(d), Some(h), Some(m)) => format!("{} days, {} hours, {} minutes", d, h, m),
-                _ => "unknown".to_string(),
-            };
-
-            Ok(format!(
-                "System stats: CPU at {}%, RAM at {}, and uptime is {}.",
-                cpu_pct, ram_info, uptime_info
-            ))
+            }
+            if let (Some(d), Some(h), Some(m)) = (stats.days, stats.hours, stats.minutes) {
+                parts.push(format!("uptime {d} days {h} hours {m} minutes"));
+            }
+            if parts.is_empty() {
+                return Err("I couldn't read system stats.".to_string());
+            }
+            Ok(format!("System stats: {}.", parts.join(", ")))
         })
     }
 }

@@ -1,15 +1,6 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ConversationState {
-    Idle,
-    Listening,
-    Processing,
-    Speaking,
-    WaitingForUser,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ConversationIntent {
     /// User or assistant greeted -> auto_listen = true (ready for user command)
     Greeting,

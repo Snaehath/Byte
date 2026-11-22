@@ -3,13 +3,12 @@ use tauri::{State, Emitter, Manager};
 use serde::{Deserialize, Serialize};
 use crate::AppState;
 use crate::audio::{self, SpeechService};
-use crate::ai::{Capability, ModelManager};
-use crate::ai::llm::{ChatMessage, LlmResult};
+use crate::ai::{ChatMessage, LlmResult, ModelManager};
 use crate::tools;
 use crate::prompts;
 use crate::core::{
-    AssistantResponse, resolve_conversation_intent, InteractionContext, ByteError,
-    STT_TIMEOUT_SECS, LLM_TIMEOUT_SECS, TOOL_TIMEOUT_SECS, TTS_SYNTH_TIMEOUT_SECS, TTS_PLAY_TIMEOUT_SECS,
+    resolve_conversation_intent, ConversationIntent, InteractionContext, ByteError,
+    CAPTURE_TIMEOUT_SECS, STT_TIMEOUT_SECS, LLM_TIMEOUT_SECS, TOOL_TIMEOUT_SECS, TTS_SYNTH_TIMEOUT_SECS, TTS_PLAY_TIMEOUT_SECS,
 };
 use crate::diagnostics::{PipelineTelemetry, StageTimer};
 use crate::platform::get_active_window_title;
@@ -20,7 +19,6 @@ use crate::presence::PresenceState;
 #[derive(Serialize)]
 pub struct ProcessResult {
     pub transcription: String,
-    pub thinking: String,
     pub response: String,
     pub auto_listen: bool,
 }
@@ -28,16 +26,19 @@ pub struct ProcessResult {
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelSettings {
-    pub provider: String,
     pub ollama_url: String,
-    pub ollama_model: String,
+    pub text_model: String,
     pub vision_model: String,
-    pub use_same_model: bool,
-    pub cloud_url: String,
-    pub cloud_model: String,
-    pub cloud_vision_model: String,
-    pub api_key_configured: bool,
     pub setup_complete: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelStatus {
+    pub reachable: bool,
+    pub text_installed: bool,
+    pub vision_installed: bool,
+    pub message: String,
 }
 
 #[derive(PartialEq, Eq)]
@@ -93,6 +94,7 @@ pub fn stop_action(state: State<'_, AppState>, app_handle: tauri::AppHandle) -> 
     audio::stop_audio();
     state.is_recording.store(false, Ordering::SeqCst);
     state.is_interacting.store(false, Ordering::SeqCst);
+    state.pending_tool_call.lock().unwrap().take();
 
     if let Some(window) = app_handle.get_webview_window("main") {
         state.presence.set_state(&window, PresenceState::Cancelled);
@@ -122,7 +124,7 @@ pub fn set_conversation_window_size(
     setup_panel: bool,
 ) -> Result<(), String> {
     let size = if expanded {
-        tauri::LogicalSize::new(420.0, if setup_panel { 650.0 } else { 370.0 })
+        tauri::LogicalSize::new(400.0, if setup_panel { 600.0 } else { 360.0 })
     } else {
         tauri::LogicalSize::new(220.0, 220.0)
     };
@@ -141,73 +143,31 @@ pub fn set_conversation_window_size(
 #[tauri::command]
 pub fn get_model_settings() -> Result<ModelSettings, String> {
     let config = crate::config::AppConfig::load();
-    let api_key_configured = crate::ai::credentials::cloud_api_key()?
-        .map(|key| !key.trim().is_empty())
-        .unwrap_or(false);
     Ok(ModelSettings {
-        provider: config.llm.provider,
         ollama_url: config.llm.ollama_url,
-        ollama_model: config.llm.ollama_model,
+        text_model: config.llm.ollama_model,
         vision_model: config.llm.vision_model,
-        use_same_model: config.llm.use_same_model,
-        cloud_url: config.llm.cloud_url,
-        cloud_model: config.llm.cloud_model,
-        cloud_vision_model: config.llm.cloud_vision_model,
-        api_key_configured,
         setup_complete: config.llm.setup_complete,
     })
 }
 
 #[tauri::command]
-pub fn save_model_settings(settings: ModelSettings, api_key: String) -> Result<ModelSettings, String> {
-    let provider = settings.provider.trim();
-    if provider != "ollama" && provider != "cloud" {
-        return Err("Choose Local Ollama or Cloud API.".to_string());
+pub fn save_model_settings(ollama_url: String) -> Result<ModelSettings, String> {
+    let endpoint = ollama_url.trim();
+    let scheme_ok = endpoint.starts_with("http://") || endpoint.starts_with("https://");
+    if !scheme_ok || endpoint.chars().any(char::is_whitespace) || endpoint.len() > 2048 {
+        return Err("Enter a valid Ollama endpoint, such as http://localhost:11434.".to_string());
     }
-
-    let endpoint = if provider == "cloud" { settings.cloud_url.trim() } else { settings.ollama_url.trim() };
-    let endpoint_scheme_ok = endpoint.starts_with("https://")
-        || (provider == "ollama" && endpoint.starts_with("http://"));
-    if !endpoint_scheme_ok || endpoint.chars().any(char::is_whitespace) || endpoint.len() > 2048 {
-        return Err(if provider == "cloud" {
-            "Enter a valid HTTPS cloud API endpoint.".to_string()
-        } else {
-            "Enter a valid local Ollama endpoint.".to_string()
-        });
-    }
-
-    let chat_model = if provider == "cloud" { settings.cloud_model.trim() } else { settings.ollama_model.trim() };
-    let vision_model = if provider == "cloud" { settings.cloud_vision_model.trim() } else { settings.vision_model.trim() };
-    if chat_model.is_empty() || chat_model.len() > 120 || (!settings.use_same_model && vision_model.len() > 120) {
-        return Err("Enter a chat model name under 120 characters.".to_string());
-    }
-    if api_key.len() > 2048 {
-        return Err("The API key is too long.".to_string());
-    }
-    if provider == "cloud" {
-        let already_configured = crate::ai::credentials::cloud_api_key()?
-            .map(|key| !key.trim().is_empty())
-            .unwrap_or(false);
-        if api_key.trim().is_empty() && !already_configured {
-            return Err("Enter an API key for the selected cloud provider.".to_string());
-        }
-        if !api_key.trim().is_empty() {
-            crate::ai::credentials::store_cloud_api_key(api_key.trim())?;
-        }
-    }
-
     let mut config = crate::config::AppConfig::load();
-    config.llm.provider = provider.to_string();
-    config.llm.ollama_url = settings.ollama_url.trim().to_string();
-    config.llm.ollama_model = settings.ollama_model.trim().to_string();
-    config.llm.vision_model = settings.vision_model.trim().to_string();
-    config.llm.use_same_model = settings.use_same_model;
-    config.llm.cloud_url = settings.cloud_url.trim().to_string();
-    config.llm.cloud_model = settings.cloud_model.trim().to_string();
-    config.llm.cloud_vision_model = settings.cloud_vision_model.trim().to_string();
+    config.llm.ollama_url = normalize_ollama_endpoint(endpoint)?;
     config.llm.setup_complete = true;
     config.save()?;
     get_model_settings()
+}
+
+/// Accept either the Ollama root or the OpenAI-compatible chat URL and store the chat URL.
+fn normalize_ollama_endpoint(endpoint: &str) -> Result<String, String> {
+    Ok(format!("{}/v1/chat/completions", ollama_api_root(endpoint)?))
 }
 
 fn ollama_api_root(endpoint: &str) -> Result<String, String> {
@@ -234,66 +194,79 @@ struct OllamaModelEntry {
     name: String,
 }
 
-#[tauri::command]
-pub async fn list_ollama_models(state: State<'_, AppState>, ollama_url: String) -> Result<Vec<String>, String> {
-    let root = ollama_api_root(&ollama_url)?;
-    let response = state.http_client.get(format!("{root}/api/tags"))
+async fn list_ollama_models(client: &reqwest::Client, ollama_url: &str) -> Result<Vec<String>, String> {
+    let root = ollama_api_root(ollama_url)?;
+    let response = client.get(format!("{root}/api/tags"))
         .timeout(std::time::Duration::from_secs(5))
         .send().await
-        .map_err(|e| format!("Could not reach Ollama: {e}"))?
+        .map_err(|_| format!("Ollama isn't responding at {root}. Make sure it's running."))?
         .error_for_status().map_err(|e| format!("Could not list Ollama models: {e}"))?;
-    let mut result: Vec<String> = response.json::<OllamaTagsResponse>().await
+    Ok(response.json::<OllamaTagsResponse>().await
         .map_err(|e| format!("Ollama returned an invalid model list: {e}"))?
-        .models.into_iter().map(|model| model.name).collect();
-    result.sort_by_key(|name| name.to_lowercase());
-    Ok(result)
+        .models.into_iter().map(|model| model.name).collect())
+}
+
+fn model_installed(installed: &[String], model: &str) -> bool {
+    installed.iter().any(|name| {
+        name == model || (!model.contains(':') && name == &format!("{model}:latest"))
+    })
 }
 
 #[tauri::command]
-pub async fn pull_ollama_model(state: State<'_, AppState>, ollama_url: String, model: String) -> Result<Vec<String>, String> {
+pub async fn get_model_status(state: State<'_, AppState>, ollama_url: String) -> Result<ModelStatus, String> {
+    let config = crate::config::AppConfig::load();
+    match list_ollama_models(&state.http_client, &ollama_url).await {
+        Ok(installed) => {
+            let text_installed = model_installed(&installed, &config.llm.ollama_model);
+            let vision_installed = model_installed(&installed, &config.llm.vision_model);
+            let message = match (text_installed, vision_installed) {
+                (true, true) => "Connected. All models are ready.".to_string(),
+                _ => "Connected. Some models still need to be downloaded.".to_string(),
+            };
+            Ok(ModelStatus { reachable: true, text_installed, vision_installed, message })
+        }
+        Err(message) => Ok(ModelStatus {
+            reachable: false,
+            text_installed: false,
+            vision_installed: false,
+            message,
+        }),
+    }
+}
+
+#[tauri::command]
+pub async fn pull_ollama_model(state: State<'_, AppState>, ollama_url: String, model: String) -> Result<ModelStatus, String> {
+    let config = crate::config::AppConfig::load();
     let model = model.trim();
-    if model.is_empty() || model.len() > 120 || model.chars().any(char::is_whitespace) {
-        return Err("Enter a valid Ollama model name, such as ministral-3:8b.".to_string());
+    if model != config.llm.ollama_model && model != config.llm.vision_model {
+        return Err("Only Byte's built-in models can be downloaded.".to_string());
     }
     let root = ollama_api_root(&ollama_url)?;
     let response = state.http_client.post(format!("{root}/api/pull"))
         .timeout(std::time::Duration::from_secs(2 * 60 * 60))
         .json(&serde_json::json!({ "name": model, "stream": false }))
         .send().await
-        .map_err(|e| format!("Could not download the Ollama model: {e}"))?
-        .error_for_status().map_err(|e| format!("Ollama could not download that model: {e}"))?;
+        .map_err(|e| format!("Could not download {model}: {e}"))?
+        .error_for_status().map_err(|e| format!("Ollama could not download {model}: {e}"))?;
     let body: serde_json::Value = response.json().await
         .map_err(|e| format!("Ollama returned an invalid download result: {e}"))?;
     if let Some(error) = body.get("error").and_then(serde_json::Value::as_str) {
-        return Err(format!("Ollama model download failed: {error}"));
+        return Err(format!("Download failed: {error}"));
     }
-    list_ollama_models(state, ollama_url).await
-}
-
-#[tauri::command]
-pub fn get_memory_snapshot(state: State<'_, AppState>) -> Result<crate::memory::ByteMemory, String> {
-    state.memory.lock()
-        .map(|memory| memory.clone())
-        .map_err(|_| "Saved memory is unavailable.".to_string())
-}
-
-#[tauri::command]
-pub fn clear_conversation_history(state: State<'_, AppState>) -> Result<(), String> {
-    let mut memory = state.memory.lock().map_err(|_| "Saved memory is unavailable.".to_string())?;
-    memory.recent_conversation.clear();
-    memory.save()
+    get_model_status(state, ollama_url).await
 }
 
 #[tauri::command]
 pub fn reset_saved_memory(state: State<'_, AppState>) -> Result<(), String> {
     let mut memory = state.memory.lock().map_err(|_| "Saved memory is unavailable.".to_string())?;
-    let mut cleared = crate::memory::ByteMemory::default();
-    cleared.user_profile.name.clear();
-    cleared.user_profile.preferences.clear();
-    cleared.user_profile.habits.clear();
-    cleared.is_first_run = false;
-    *memory = cleared;
-    memory.save()
+    let reminders = std::mem::take(&mut memory.scheduled_reminders);
+    *memory = crate::memory::ByteMemory { is_first_run: false, scheduled_reminders: reminders, ..Default::default() };
+    memory.save()?;
+    drop(memory);
+    if let Ok(mut session) = state.session.lock() {
+        session.clear();
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -302,89 +275,98 @@ pub fn get_wake_word_enabled(state: State<'_, AppState>) -> bool {
 }
 
 #[tauri::command]
-pub fn set_wake_word_enabled(state: State<'_, AppState>, enabled: bool) -> Result<bool, String> {
-    let mut config = crate::config::AppConfig::load();
-    config.wake_word_enabled = enabled;
-    config.save()?;
-    state.wake_word_enabled.store(enabled, Ordering::SeqCst);
+pub fn set_wake_word_enabled(app: tauri::AppHandle, enabled: bool) -> Result<bool, String> {
+    crate::tray::apply_wake_word(&app, enabled)?;
     Ok(enabled)
 }
 
-#[tauri::command]
-pub async fn get_system_health(state: State<'_, AppState>) -> Result<crate::diagnostics::SystemHealthReport, String> {
-    Ok(crate::diagnostics::HealthChecker::check_system(&state.http_client).await)
-}
-
-/// Check whether an interaction context is still the currently active one and has not been cancelled
-fn is_interaction_valid(ctx: &InteractionContext, state: &AppState) -> bool {
-    if ctx.is_cancelled() {
-        return false;
-    }
-    if let Ok(guard) = state.active_interaction.lock() {
-        if let Some(active) = guard.as_ref() {
-            return active.id == ctx.id && !active.is_cancelled();
-        }
-    }
-    false
-}
-
-/// Helper: Sanitize conversation history to only retain completed user/assistant pairs.
-/// Enforces strict alternation (user -> assistant) and guarantees history always ends with an assistant message.
-#[cfg(test)]
-fn sanitize_conversation_history(history: &[crate::memory::ConversationTurn]) -> Vec<ChatMessage> {
-    let mut result = Vec::new();
-
-    for turn in history {
-        match turn.role.as_str() {
-            "user" => {
-                // Never allow two consecutive user messages in history.
-                if result.last().map(|m: &ChatMessage| m.role.as_str()) == Some("user") {
-                    continue;
-                }
-
-                result.push(ChatMessage {
-                    role: "user".to_string(),
-                    content: turn.message.clone(),
-                });
-            }
-
-            "assistant" => {
-                // Assistant must follow a user message.
-                if result.last().map(|m: &ChatMessage| m.role.as_str()) == Some("user") {
-                    result.push(ChatMessage {
-                        role: "assistant".to_string(),
-                        content: turn.message.clone(),
-                    });
-                }
-            }
-
-            _ => {}
-        }
-    }
-
-    // Critical invariant: history prior to current turn MUST end with an assistant message
-    if result.last().map(|m| m.role.as_str()) == Some("user") {
-        result.pop();
-    }
-
-    result
-}
-
-// Re-export is_simple_greeting from prompts module
-pub use crate::prompts::is_simple_greeting;
+/// Pending confirmations expire so a stray "yes" much later can't trigger them.
+const CONFIRMATION_WINDOW: std::time::Duration = std::time::Duration::from_secs(90);
 
 /// Determines whether transcription is empty, ambient noise, or a bracketed non-verbal artifact
 pub fn is_empty_or_noise(text: &str) -> bool {
     let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return true;
-    }
-    (trimmed.starts_with('(') && trimmed.ends_with(')'))
+    trimmed.is_empty()
+        || (trimmed.starts_with('(') && trimmed.ends_with(')'))
         || (trimmed.starts_with('[') && trimmed.ends_with(']'))
         || trimmed.chars().all(|c| !c.is_alphanumeric())
 }
 
-/// Active conversation lifecycle loop (Listen -> Auto-stop on silence -> Transcribe -> Query -> Play TTS)
+fn is_stop_command(text: &str) -> bool {
+    matches!(text, "stop" | "cancel" | "never mind" | "nevermind")
+        || ["stop speaking", "shut up", "be quiet"].iter().any(|p| text.contains(p))
+}
+
+fn reply(transcription: impl Into<String>, response: impl Into<String>, auto_listen: bool) -> ProcessResult {
+    ProcessResult { transcription: transcription.into(), response: response.into(), auto_listen }
+}
+
+/// Is this interaction still the active one and not cancelled?
+fn is_interaction_valid(ctx: &InteractionContext, state: &AppState) -> bool {
+    !ctx.is_cancelled()
+        && state.active_interaction.lock().ok()
+            .and_then(|guard| guard.as_ref().map(|active| active.id == ctx.id && !active.is_cancelled()))
+            .unwrap_or(false)
+}
+
+/// Release the interaction and leave the orb in `presence`.
+fn finish(state: &AppState, window: &tauri::WebviewWindow, ctx: &InteractionContext, presence: PresenceState) {
+    if let Ok(mut active) = state.active_interaction.lock() {
+        if active.as_ref().is_some_and(|current| current.id == ctx.id) {
+            active.take();
+        }
+    }
+    state.is_recording.store(false, Ordering::SeqCst);
+    state.is_interacting.store(false, Ordering::SeqCst);
+    state.presence.set_state(window, presence);
+}
+
+fn cancelled(state: &AppState, window: &tauri::WebviewWindow, ctx: &InteractionContext, transcription: &str) -> Result<ProcessResult, String> {
+    log::info!("Interaction {} cancelled.", ctx.id);
+    finish(state, window, ctx, PresenceState::Cancelled);
+    Ok(reply(transcription, "Cancelled.", false))
+}
+
+/// Query the text model, honoring cancellation and the stage timeout.
+/// `Ok(None)` means the interaction was cancelled.
+async fn ask_model(
+    ctx: &InteractionContext,
+    client: &reqwest::Client,
+    messages: &[ChatMessage],
+    tools: Option<&[serde_json::Value]>,
+) -> Result<Option<LlmResult>, ByteError> {
+    let manager = ModelManager::default();
+    tokio::select! {
+        res = tokio::time::timeout(std::time::Duration::from_secs(LLM_TIMEOUT_SECS), manager.chat(client, messages, tools)) => {
+            match res {
+                Ok(Ok(result)) => Ok(Some(result)),
+                Ok(Err(msg)) if msg.contains("Network request failed") => Err(ByteError::ModelUnreachable(msg)),
+                Ok(Err(msg)) => Err(ByteError::ModelError(msg)),
+                Err(_) => Err(ByteError::Timeout { stage: "AI generation".to_string(), duration_ms: LLM_TIMEOUT_SECS * 1000 }),
+            }
+        }
+        _ = ctx.cancellation.cancelled() => Ok(None),
+    }
+}
+
+/// Run a tool with a timeout. Tool errors are already phrased for the user.
+async fn run_tool(
+    registry: &tools::ToolRegistry,
+    call: &tools::ToolCall,
+    window: &tauri::WebviewWindow,
+    state: &State<'_, AppState>,
+    transcription: &str,
+    confirmed: bool,
+) -> Result<String, String> {
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(TOOL_TIMEOUT_SECS),
+        registry.execute_tool(call, window, &state.http_client, transcription, state, confirmed),
+    ).await {
+        Ok(result) => result,
+        Err(_) => Err(ByteError::Timeout { stage: call.tool.replace('_', " "), duration_ms: TOOL_TIMEOUT_SECS * 1000 }.to_user_friendly_message()),
+    }
+}
+
 #[tauri::command]
 pub async fn start_interaction(state: State<'_, AppState>, window: tauri::WebviewWindow) -> Result<ProcessResult, String> {
     run_interaction(state, window, None).await
@@ -406,687 +388,331 @@ pub async fn start_text_interaction(
     run_interaction(state, window, Some(text)).await
 }
 
+/// Record the microphone until silence (or the capture limit) and transcribe it.
+/// `Ok(None)` means the interaction was cancelled.
+async fn listen_and_transcribe(
+    state: &State<'_, AppState>,
+    window: &tauri::WebviewWindow,
+    ctx: &InteractionContext,
+    telemetry: &mut PipelineTelemetry,
+) -> Result<Option<String>, ByteError> {
+    state.presence.set_state(window, PresenceState::Listening);
+    let capture_timer = StageTimer::start();
+    audio::start_recording(state, window.clone()).map_err(ByteError::TranscriptionFailed)?;
+
+    let capture_limit = std::time::Duration::from_secs(CAPTURE_TIMEOUT_SECS);
+    let started = std::time::Instant::now();
+    while state.is_recording.load(Ordering::SeqCst) {
+        if ctx.is_cancelled() {
+            return Ok(None);
+        }
+        if started.elapsed() > capture_limit {
+            log::info!("Capture reached {}s limit; processing what was heard.", CAPTURE_TIMEOUT_SECS);
+            state.is_recording.store(false, Ordering::SeqCst);
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    telemetry.vad_capture_ms = capture_timer.elapsed_ms();
+    let _ = window.emit("audio_level", 0.0f32);
+    if ctx.is_cancelled() {
+        return Ok(None);
+    }
+
+    state.presence.set_state(window, PresenceState::Thinking);
+    let raw_samples = state.recorded_data.lock().map(|b| b.clone()).unwrap_or_default();
+    if raw_samples.is_empty() {
+        return Ok(Some(String::new()));
+    }
+    let sample_rate = *state.device_sample_rate.lock().unwrap();
+    let resampled = audio::resample(&raw_samples, sample_rate, 16000);
+    let temp_wav = BytePaths::temp_wav();
+    audio::save_wav(&temp_wav, &resampled)
+        .map_err(|e| ByteError::TranscriptionFailed(format!("Failed to save WAV: {e}")))?;
+
+    let stt_timer = StageTimer::start();
+    let wav = temp_wav.clone();
+    let task = tokio::task::spawn_blocking(move || SpeechService::default().transcribe(&wav));
+    let result = tokio::select! {
+        res = tokio::time::timeout(std::time::Duration::from_secs(STT_TIMEOUT_SECS), task) => match res {
+            Ok(Ok(text)) => text.map(Some).map_err(ByteError::TranscriptionFailed),
+            Ok(Err(e)) => Err(ByteError::TranscriptionFailed(format!("Transcription task failed: {e}"))),
+            Err(_) => Err(ByteError::Timeout { stage: "transcription".to_string(), duration_ms: STT_TIMEOUT_SECS * 1000 }),
+        },
+        _ = ctx.cancellation.cancelled() => Ok(None),
+    };
+    let _ = std::fs::remove_file(&temp_wav);
+    telemetry.stt_ms = stt_timer.elapsed_ms();
+    if let Ok(Some(text)) = &result {
+        log::info!("Whisper finished in {}ms: '{}'", telemetry.stt_ms, text);
+    }
+    result
+}
+
+/// Decide what Byte says (and does) for one user turn. Returns the reply and
+/// the tool that ran, if any. `Ok(None)` means the interaction was cancelled.
+async fn respond(
+    state: &State<'_, AppState>,
+    window: &tauri::WebviewWindow,
+    ctx: &InteractionContext,
+    transcription: &str,
+    telemetry: &mut PipelineTelemetry,
+) -> Result<Option<(String, Option<String>)>, ByteError> {
+    let registry = tools::ToolRegistry::new();
+
+    // A pending confirmation is answered by this turn, if it is a yes/no.
+    let pending = state.pending_tool_call.lock().unwrap().take()
+        .filter(|(_, asked_at)| asked_at.elapsed() < CONFIRMATION_WINDOW);
+    if let Some((call, _)) = pending {
+        match confirmation_intent(transcription) {
+            ConfirmationIntent::Confirm => {
+                let timer = StageTimer::start();
+                let output = run_tool(&registry, &call, window, state, transcription, true).await;
+                telemetry.tool_ms = timer.elapsed_ms();
+                return Ok(Some((output.unwrap_or_else(|e| e), Some(call.tool))));
+            }
+            ConfirmationIntent::Cancel => return Ok(Some(("Okay, I won't.".to_string(), None))),
+            ConfirmationIntent::Unclear => log::info!("Confirmation not given; treating as a new request."),
+        }
+    }
+
+    let (user_name, saved_preferences) = {
+        let memory = state.memory.lock().unwrap();
+        let lower = transcription.to_lowercase();
+        let wants_preferences = ["my usual", "my favorite", "my favourite", "my preference", "remember about me"]
+            .iter().any(|p| lower.contains(p));
+        let prefs = wants_preferences.then(|| {
+            memory.user_profile.preferences.iter()
+                .map(|(k, v)| format!("- {}: {}", k.replace('_', " "), v))
+                .collect::<Vec<_>>()
+                .join("\n")
+        });
+        (memory.user_profile.name.clone(), prefs)
+    };
+    let is_greeting = prompts::is_simple_greeting(transcription);
+    let active_window = if is_greeting { String::new() } else { get_active_window_title() };
+    let system_prompt = prompts::build_system_prompt(
+        &chrono::Local::now().format("%A, %B %-d, %Y, %-I:%M %p").to_string(),
+        &active_window,
+        Some(user_name.as_str()),
+        saved_preferences.as_deref(),
+    );
+
+    let mut messages = vec![ChatMessage::new("system", system_prompt)];
+    messages.extend(state.session.lock().unwrap().history());
+    messages.push(ChatMessage::new("user", transcription));
+
+    let tools_schema = registry.get_openai_tools();
+    let llm_timer = StageTimer::start();
+    let Some(result) = ask_model(ctx, &state.http_client, &messages, Some(&tools_schema)).await? else {
+        return Ok(None);
+    };
+    telemetry.llm_ms = llm_timer.elapsed_ms();
+    log::info!("Model replied in {}ms: content='{}', tool_call={:?}", telemetry.llm_ms, result.content, result.tool_call);
+
+    let Some(call) = result.tool_call else {
+        let (_, text) = tools::extract_think(&result.content);
+        return Ok(Some((text, None)));
+    };
+    let Some(tool) = registry.get_tool(&call.tool) else {
+        log::warn!("Model requested unknown tool '{}'", call.tool);
+        return Ok(Some(("I can't do that yet.".to_string(), None)));
+    };
+    if !is_interaction_valid(ctx, state) {
+        return Ok(None);
+    }
+
+    if tool.requires_confirmation() {
+        let question = tool.confirmation_prompt(&call.parameters);
+        *state.pending_tool_call.lock().unwrap() = Some((call, std::time::Instant::now()));
+        return Ok(Some((question, None)));
+    }
+
+    let tool_name = call.tool.clone();
+    let timer = StageTimer::start();
+    let output = run_tool(&registry, &call, window, state, transcription, false).await;
+    telemetry.tool_ms = timer.elapsed_ms();
+    let output = match output {
+        Ok(output) => output,
+        Err(error) => {
+            log::warn!("Tool {} failed: {}", tool_name, error);
+            return Ok(Some((error, Some(tool_name))));
+        }
+    };
+    log::info!("Tool {} result: {}", tool_name, output);
+
+    // Data tools: let the model answer the actual question from the result.
+    if tool.answer_from_result() && is_interaction_valid(ctx, state) {
+        messages.push(ChatMessage::new("system", prompts::tool_result_instructions(&tool_name, &output)));
+        match ask_model(ctx, &state.http_client, &messages, None).await {
+            Ok(Some(answer)) => {
+                let (_, text) = tools::extract_think(&answer.content);
+                if !text.trim().is_empty() && answer.tool_call.is_none() {
+                    return Ok(Some((text, Some(tool_name))));
+                }
+            }
+            Ok(None) => return Ok(None),
+            Err(e) => log::warn!("Follow-up answer failed, reading tool output instead: {e}"),
+        }
+    }
+    Ok(Some((output, Some(tool_name))))
+}
+
 async fn run_interaction(
     state: State<'_, AppState>,
     window: tauri::WebviewWindow,
     text_input: Option<String>,
 ) -> Result<ProcessResult, String> {
-    // Pre-empt any previous interaction if one was still in flight
+    // Pre-empt any interaction still in flight.
     if let Ok(mut active) = state.active_interaction.lock() {
         if let Some(prev) = active.take() {
-            log::info!("Pre-empting previous active interaction: {}", prev.id);
+            log::info!("Pre-empting previous interaction {}", prev.id);
             prev.cancel();
         }
     }
     audio::stop_audio();
     audio::reset_cancellation();
 
-    // Create a fresh, dedicated InteractionContext for this turn
-    let context = InteractionContext::new();
+    let ctx = InteractionContext::new();
     if let Ok(mut active) = state.active_interaction.lock() {
-        *active = Some(context.clone());
+        *active = Some(ctx.clone());
     }
-
+    state.is_interacting.store(true, Ordering::SeqCst);
     let pipeline_start = StageTimer::start();
     let mut telemetry = PipelineTelemetry::new();
+    let voice_mode = text_input.is_none();
 
-    state.is_interacting.store(true, Ordering::SeqCst);
-
-    let text_mode = text_input.is_some();
-    let transcription;
-    if let Some(text) = text_input {
-        state.presence.set_state(&window, PresenceState::Thinking);
-        let _ = window.emit("processing", ());
-        transcription = text;
-    } else {
-        // Start audio capture and wait for silence detection or cancellation.
-        state.presence.set_state(&window, PresenceState::Listening);
-        let capture_timer = StageTimer::start();
-        if let Err(error) = audio::start_recording(&state, window.clone()) {
-            state.is_recording.store(false, Ordering::SeqCst);
-            state.is_interacting.store(false, Ordering::SeqCst);
-            state.presence.set_state(&window, PresenceState::Idle);
-            if let Ok(mut active) = state.active_interaction.lock() {
-                if active.as_ref().map(|current| current.id) == Some(context.id) {
-                    active.take();
-                }
-            }
-            return Err(error);
+    // 1. Get the user's words.
+    let transcription = match text_input {
+        Some(text) => {
+            state.presence.set_state(&window, PresenceState::Thinking);
+            text
         }
-
-        while state.is_recording.load(Ordering::SeqCst) {
-            if context.is_cancelled() {
-                log::info!("Interaction {} cancelled during audio recording.", context.id);
-                state.presence.set_state(&window, PresenceState::Cancelled);
-                state.is_interacting.store(false, Ordering::SeqCst);
-                return Ok(ProcessResult {
-                    transcription: String::new(),
-                    thinking: String::new(),
-                    response: "Cancelled.".to_string(),
-                    auto_listen: false,
-                });
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        }
-        telemetry.vad_capture_ms = capture_timer.elapsed_ms();
-
-        if context.is_cancelled() {
-            state.presence.set_state(&window, PresenceState::Cancelled);
-            state.is_interacting.store(false, Ordering::SeqCst);
-            return Ok(ProcessResult {
-                transcription: String::new(),
-                thinking: String::new(),
-                response: "Cancelled.".to_string(),
-                auto_listen: false,
-            });
-        }
-
-        state.presence.set_state(&window, PresenceState::Thinking);
-        let _ = window.emit("processing", ());
-        let raw_samples = {
-            let buffer = state.recorded_data.lock().unwrap();
-            buffer.clone()
-        };
-        if raw_samples.is_empty() {
-            state.presence.set_state(&window, PresenceState::Idle);
-            state.is_interacting.store(false, Ordering::SeqCst);
-            return Err("No audio data recorded".to_string());
-        }
-
-        let sample_rate = *state.device_sample_rate.lock().unwrap();
-        let resampled = audio::resample(&raw_samples, sample_rate, 16000);
-        let temp_wav = BytePaths::temp_wav();
-        audio::save_wav(&temp_wav, &resampled)
-            .map_err(|e| format!("Failed to save WAV: {}", e))?;
-
-        log::info!("Starting Whisper transcription...");
-        let whisper_timer = StageTimer::start();
-        let wav_for_transcribe = temp_wav.clone();
-        let transcribe_task = tokio::task::spawn_blocking(move || {
-            let speech = SpeechService::default();
-            speech.transcribe(&wav_for_transcribe)
-        });
-
-        let cancel_stt = context.cancellation.cancelled();
-        let transcription_res: Result<String, ByteError> = tokio::select! {
-            res = tokio::time::timeout(std::time::Duration::from_secs(STT_TIMEOUT_SECS), transcribe_task) => {
-                match res {
-                    Ok(join_res) => match join_res {
-                        Ok(trans_res) => trans_res.map_err(ByteError::TranscriptionFailed),
-                        Err(e) => Err(ByteError::TranscriptionFailed(format!("Transcription task join error: {}", e))),
-                    },
-                    Err(_) => Err(ByteError::Timeout { stage: "transcription".to_string(), duration_ms: STT_TIMEOUT_SECS * 1000 }),
-                }
-            }
-            _ = cancel_stt => {
-                let _ = std::fs::remove_file(&temp_wav);
-                log::info!("Interaction {} cancelled during STT transcription.", context.id);
-                state.presence.set_state(&window, PresenceState::Cancelled);
-                state.is_interacting.store(false, Ordering::SeqCst);
-                return Ok(ProcessResult {
-                    transcription: String::new(),
-                    thinking: String::new(),
-                    response: "Cancelled.".to_string(),
-                    auto_listen: false,
-                });
-            }
-        };
-        let _ = std::fs::remove_file(&temp_wav);
-        telemetry.stt_ms = whisper_timer.elapsed_ms();
-
-        transcription = match transcription_res {
-            Ok(text) => {
-                log::info!("Whisper transcription finished in {}ms: '{}'", telemetry.stt_ms, text);
-                text
-            }
+        None => match listen_and_transcribe(&state, &window, &ctx, &mut telemetry).await {
+            Ok(Some(text)) => text,
+            Ok(None) => return cancelled(&state, &window, &ctx, ""),
             Err(err) => {
-                log::error!("STT stage error: {}", err);
-                let friendly = err.to_user_friendly_message();
-                state.presence.set_state(&window, PresenceState::Idle);
-                state.is_interacting.store(false, Ordering::SeqCst);
-                return Ok(ProcessResult {
-                    transcription: String::new(),
-                    thinking: String::new(),
-                    response: friendly,
-                    auto_listen: false,
-                });
+                log::error!("Voice input failed: {err}");
+                finish(&state, &window, &ctx, PresenceState::Idle);
+                return Err(err.to_user_friendly_message());
             }
-        };
+        },
+    };
+    if ctx.is_cancelled() {
+        return cancelled(&state, &window, &ctx, &transcription);
     }
 
-    if context.is_cancelled() {
-        log::info!("Interaction {} cancelled after STT transcription.", context.id);
-        state.presence.set_state(&window, PresenceState::Cancelled);
-        state.is_interacting.store(false, Ordering::SeqCst);
-        return Ok(ProcessResult {
-            transcription,
-            thinking: String::new(),
-            response: "Cancelled.".to_string(),
-            auto_listen: false,
-        });
-    }
-
-    // Check if user is asking to stop/cancel
-    let clean_lower = transcription.trim().to_lowercase();
-    if clean_lower == "stop" || clean_lower == "cancel" || clean_lower.contains("stop speaking") || clean_lower.contains("shut up") || clean_lower.contains("be quiet") {
-        log::info!("Stop/Cancel voice command recognized: '{}'", clean_lower);
-        context.cancel();
-        state.presence.set_state(&window, PresenceState::Cancelled);
+    let lower = transcription.trim().trim_end_matches(['.', '!']).to_lowercase();
+    if is_stop_command(&lower) {
         audio::stop_audio();
-        state.is_interacting.store(false, Ordering::SeqCst);
-        return Ok(ProcessResult {
-            transcription,
-            thinking: String::new(),
-            response: "Stopped.".to_string(),
-            auto_listen: false,
-        });
+        state.session.lock().unwrap().clear();
+        state.pending_tool_call.lock().unwrap().take();
+        return cancelled(&state, &window, &ctx, &transcription);
     }
-
-    // Check if user is asking to clear conversation memory
-    if clean_lower == "clear memory" || clean_lower == "clear history" || clean_lower == "reset memory" || clean_lower == "reset conversation" || clean_lower == "forget everything" {
-        log::info!("Clearing conversation history memory on user command...");
-        if let Ok(mut mem) = state.memory.lock() {
-            mem.recent_conversation.clear();
-            let _ = mem.save();
-        }
-        state.presence.set_state(&window, PresenceState::Idle);
-        state.is_interacting.store(false, Ordering::SeqCst);
-        return Ok(ProcessResult {
-            transcription,
-            thinking: String::new(),
-            response: "I've cleared our conversation history.".to_string(),
-            auto_listen: false,
-        });
-    }
-
     if is_empty_or_noise(&transcription) {
-        log::info!("Whisper transcription is empty or ambient noise: '{}'", transcription);
-        state.presence.set_state(&window, PresenceState::Idle);
-        state.is_interacting.store(false, Ordering::SeqCst);
-        return Ok(ProcessResult {
-            transcription,
-            thinking: String::new(),
-            response: String::new(),
-            auto_listen: false,
-        });
+        log::info!("Ignoring empty or noise transcription: '{}'", transcription);
+        finish(&state, &window, &ctx, PresenceState::Idle);
+        return Ok(reply(transcription, "", false));
     }
 
-    // 5. Process input with Model Manager
-    let mut final_response = String::new();
-    let mut final_thinking = String::new();
-    let mut is_tool = false;
-    let mut has_error = false;
-    let mut executed_tool_name: Option<String> = None;
-
-    // Check if there is a pending tool call awaiting confirmation
-    let pending_call_opt = {
-        let mut p = state.pending_tool_call.lock().unwrap();
-        p.take()
-    };
-
-    if let Some(pending_call) = pending_call_opt {
-        match confirmation_intent(&transcription) {
-        ConfirmationIntent::Confirm => {
-            log::info!("User confirmed pending tool execution: {:?}", pending_call);
-            let registry = tools::ToolRegistry::new();
-            let tool_exec_timer = StageTimer::start();
-            let execute_result = match tokio::time::timeout(
-                std::time::Duration::from_secs(TOOL_TIMEOUT_SECS),
-                registry.execute_tool(&pending_call, &window, &state.http_client, &transcription, &state, true)
-            ).await {
-                Ok(Ok(output)) => output,
-                Ok(Err(e)) => {
-                    log::error!("Pending tool execution error: {}", e);
-                    ByteError::ToolExecutionFailed { tool: pending_call.tool.clone(), error: e }.to_user_friendly_message()
-                }
-                Err(_) => {
-                    log::warn!("Pending tool execution timed out after {}s", TOOL_TIMEOUT_SECS);
-                    ByteError::Timeout { stage: format!("tool '{}'", pending_call.tool), duration_ms: TOOL_TIMEOUT_SECS * 1000 }.to_user_friendly_message()
-                }
-            };
-            telemetry.tool_ms = tool_exec_timer.elapsed_ms();
-            let _ = state.pending_tool_transcription.lock().unwrap().take();
-            final_response = execute_result;
-            is_tool = true;
-            executed_tool_name = Some(pending_call.tool.clone());
-        }
-        ConfirmationIntent::Cancel => {
-            log::info!("User cancelled pending tool execution.");
-            let _ = state.pending_tool_transcription.lock().unwrap().take();
-            final_response = "Okay, cancelled.".to_string();
-        }
-        ConfirmationIntent::Unclear => {
-            let _ = state.pending_tool_transcription.lock().unwrap().take();
-            log::info!("User sent new command instead of confirming: {}", transcription);
-        }
-        }
-    }
-
-    if final_response.is_empty() {
-        let registry = tools::ToolRegistry::new();
-        let tools_schema = registry.get_openai_tools();
-        let model_manager = ModelManager::default();
-
-        let current_time_str = chrono::Local::now().format("%A, %B %d, %Y %I:%M %p").to_string();
-        let is_greeting = prompts::is_simple_greeting(&transcription);
-        let active_window = if is_greeting { String::new() } else { get_active_window_title() };
-
-        // Only load saved preferences when the current message clearly asks for them.
-        let trans_lower = transcription.to_lowercase();
-        let asks_for_saved_preferences = [
-            "my usual",
-            "my favorite",
-            "my preference",
-            "my habit",
-            "what do you remember about my",
-        ]
-        .iter()
-        .any(|phrase| trans_lower.contains(phrase));
-        let relevant_memory = if !is_greeting && asks_for_saved_preferences {
-            state.memory.lock().ok().map(|m| {
-                m.user_profile.preferences.iter()
-                    .map(|(k, v)| format!("- {}: {}", k, v))
-                    .collect::<Vec<String>>()
-                    .join("\n")
-            })
-        } else {
-            None
-        };
-
-        // Build minimum sufficient system instructions
-        let system_instructions = prompts::build_system_prompt(
-            &current_time_str,
-            &active_window,
-            is_greeting,
-            relevant_memory.as_deref(),
-        );
-
-        let mut messages: Vec<ChatMessage> = Vec::new();
-        messages.push(ChatMessage {
-            role: "system".to_string(),
-            content: system_instructions,
-        });
-
-        // Each request starts with only the current message. Past conversations
-        // are saved for user review, never silently reintroduced as context.
-        messages.push(ChatMessage {
-            role: "user".to_string(),
-            content: transcription.clone(),
-        });
-
-        let llm_timer = StageTimer::start();
-        log::debug!("LLM request: {} message(s), {} tool(s)", messages.len(), tools_schema.len());
-        log::info!("Interaction: Querying configured model provider with native tools...");
-
-    let cancel_llm = context.cancellation.cancelled();
-    let llm_fut = model_manager.execute(
-        Capability::ToolCalling,
-        &state.http_client,
-        &messages,
-        Some(&tools_schema),
-    );
-
-    let llm_result = tokio::select! {
-        res = tokio::time::timeout(std::time::Duration::from_secs(LLM_TIMEOUT_SECS), llm_fut) => {
-            match res {
-                Ok(call_res) => match call_res {
-                    Ok(r) => r,
-                    Err(err_msg) => {
-                        log::error!("Interaction model error: {}", err_msg);
-                        let byte_err = if err_msg.contains("Connection refused") || err_msg.contains("error sending request") {
-                            ByteError::ModelUnreachable(err_msg)
-                        } else {
-                            ByteError::ModelError(err_msg)
-                        };
-                        final_response = byte_err.to_user_friendly_message();
-                        has_error = true;
-                        LlmResult {
-                            content: String::new(),
-                            tool_call: None,
-                        }
-                    }
-                },
-                Err(_) => {
-                    log::warn!("LLM query timed out after {}s", LLM_TIMEOUT_SECS);
-                    let byte_err = ByteError::Timeout { stage: "AI generation".to_string(), duration_ms: LLM_TIMEOUT_SECS * 1000 };
-                    final_response = byte_err.to_user_friendly_message();
-                    has_error = true;
-                    LlmResult {
-                        content: String::new(),
-                        tool_call: None,
-                    }
-                }
-            }
-        }
-        _ = cancel_llm => {
-            log::info!("Interaction {} cancelled during LLM generation.", context.id);
-            state.presence.set_state(&window, PresenceState::Cancelled);
-            state.is_interacting.store(false, Ordering::SeqCst);
-            return Ok(ProcessResult {
-                transcription,
-                thinking: String::new(),
-                response: "Cancelled.".to_string(),
-                auto_listen: false,
-            });
+    // 2. Think and act.
+    let (mut response, tool_used, has_error) = match respond(&state, &window, &ctx, &transcription, &mut telemetry).await {
+        Ok(Some((text, tool))) => (text, tool, false),
+        Ok(None) => return cancelled(&state, &window, &ctx, &transcription),
+        Err(err) => {
+            log::error!("Model stage failed: {err}");
+            (err.to_user_friendly_message(), None, true)
         }
     };
-    telemetry.llm_ms = llm_timer.elapsed_ms();
-
-    // Verify interaction is still active before processing results or calling tools
-    if !is_interaction_valid(&context, &state) {
-        log::info!("Interaction {} superseded or cancelled before tool/response handling.", context.id);
-        state.presence.set_state(&window, PresenceState::Cancelled);
-        state.is_interacting.store(false, Ordering::SeqCst);
-        return Ok(ProcessResult {
-            transcription,
-            thinking: String::new(),
-            response: "Cancelled.".to_string(),
-            auto_listen: false,
-        });
+    if response.trim().is_empty() {
+        response = "Sorry, I'm not sure how to help with that.".to_string();
+    }
+    if !is_interaction_valid(&ctx, &state) {
+        return cancelled(&state, &window, &ctx, &transcription);
     }
 
-    if !has_error {
-        log::info!(
-            "Model responded in {}ms: content='{}', tool_call={:?}",
-            telemetry.llm_ms,
-            llm_result.content,
-            llm_result.tool_call
-        );
-
-        let (thinking, clean_content) = tools::extract_think(&llm_result.content);
-        final_thinking = thinking;
-
-        if let Some(tool_call) = llm_result.tool_call {
-            is_tool = true;
-            log::info!("Tool call parsed: {:?}", tool_call);
-
-            let mut requires_conf = false;
-            let mut display_name = tool_call.tool.clone();
-            if let Some(tool) = registry.get_tool(&tool_call.tool) {
-                requires_conf = tool.requires_confirmation();
-                display_name = tool.name().to_string();
-            }
-
-            if requires_conf {
-                log::info!("Tool {} requires user confirmation.", display_name);
-                {
-                    let mut pending = state.pending_tool_call.lock().unwrap();
-                    *pending = Some(tool_call.clone());
-                }
-                {
-                    let mut pending_t = state.pending_tool_transcription.lock().unwrap();
-                    *pending_t = Some(transcription.clone());
-                }
-                final_response = format!("I need your confirmation to execute '{}'. Would you like me to proceed?", display_name);
-            } else {
-                executed_tool_name = Some(display_name.clone());
-                let tool_exec_timer = StageTimer::start();
-                let tool_res = tokio::time::timeout(
-                    std::time::Duration::from_secs(TOOL_TIMEOUT_SECS),
-                    registry.execute_tool(&tool_call, &window, &state.http_client, &transcription, &state, false)
-                ).await;
-
-                match tool_res {
-                    Ok(Ok(tool_output)) => {
-                        log::info!("Tool success: {}", tool_output);
-                        final_response = tool_output;
-                    }
-                    Ok(Err(e)) => {
-                        log::error!("Tool error: {}", e);
-                        final_response = ByteError::ToolExecutionFailed { tool: display_name, error: e }.to_user_friendly_message();
-                        has_error = true;
-                    }
-                    Err(_) => {
-                        log::warn!("Tool execution timed out after {}s", TOOL_TIMEOUT_SECS);
-                        final_response = ByteError::Timeout { stage: format!("tool '{}'", display_name), duration_ms: TOOL_TIMEOUT_SECS * 1000 }.to_user_friendly_message();
-                        has_error = true;
-                    }
-                }
-                telemetry.tool_ms = tool_exec_timer.elapsed_ms();
-            }
-        } else {
-            final_response = clean_content;
-        }
-    }
-    }
-
-    if final_response.is_empty() {
-        final_response = "I'm not sure how to help with that.".to_string();
-    }
-
-    // Verify interaction is still active before emitting UI mood or preparing audio
-    if !is_interaction_valid(&context, &state) {
-        log::info!("Interaction {} superseded or cancelled before audio synthesis.", context.id);
-        state.is_interacting.store(false, Ordering::SeqCst);
-        return Ok(ProcessResult {
-            transcription,
-            thinking: final_thinking,
-            response: final_response,
-            auto_listen: false,
-        });
-    }
-
-    // 6. Build structured assistant response and derive UI mood state cleanly
-    let assistant_resp = AssistantResponse::simple_text(final_response, final_thinking);
-    let response_text = assistant_resp.text.clone();
-    let mood = assistant_resp.ui_state.mood.clone();
-
-    if let Ok(mut m) = state.mood.lock() {
-        *m = mood.clone();
-    }
-
-    // Conversation State Machine: Resolve intent & auto-listen state
+    // 3. Decide whether to keep listening, and remember the exchange for follow-ups.
     let has_pending = state.pending_tool_call.lock().unwrap().is_some();
-    let intent = resolve_conversation_intent(
-        &transcription,
-        &response_text,
-        is_tool,
-        has_pending,
-        has_error,
-    );
-    let auto_listen = !text_mode && intent.should_auto_listen();
-    log::info!("Conversation intent resolved: {:?} (auto_listen: {})", intent, auto_listen);
+    let intent = resolve_conversation_intent(&transcription, &response, tool_used.is_some(), has_pending, has_error);
+    // Typed messages never switch the microphone on by themselves.
+    let auto_listen = voice_mode && intent.should_auto_listen();
+    let is_farewell = intent == ConversationIntent::Farewell;
+    {
+        let mut session = state.session.lock().unwrap();
+        if is_farewell || has_error {
+            session.clear();
+        } else {
+            session.record(&transcription, &response);
+        }
+    }
+    log::info!("Intent {:?} (auto_listen: {})", intent, auto_listen);
 
-    let is_farewell = intent == crate::core::ConversationIntent::Farewell;
-
-    // 7. TTS synthesis and audio playback
-    let text_to_speak = response_text.clone();
-    let window_clone = window.clone();
-    let mood_clone = mood.clone();
-
-    // Step A: Audio Synthesis (WAV generation) wrapped in tokio::select! for cancellation
+    // 4. Speak.
+    let speed = crate::config::AppConfig::load().audio.voice_speed;
     let synth_timer = StageTimer::start();
-    let speech = SpeechService::default();
-    let synth_text = text_to_speak.clone();
-    let cancel_synth = context.cancellation.cancelled();
-    let synth_task = tokio::task::spawn_blocking(move || {
-        speech.synthesize(&synth_text, 1.0)
-    });
-
-    let wav_path_res = tokio::select! {
-        res = tokio::time::timeout(std::time::Duration::from_secs(TTS_SYNTH_TIMEOUT_SECS), synth_task) => {
-            match res {
-                Ok(join_res) => match join_res {
-                    Ok(r) => r.map_err(ByteError::SynthesisFailed),
-                    Err(e) => Err(ByteError::SynthesisFailed(format!("TTS task join error: {}", e))),
-                },
-                Err(_) => {
-                    log::warn!("TTS synthesis timed out after {}s", TTS_SYNTH_TIMEOUT_SECS);
-                    Err(ByteError::Timeout { stage: "speech synthesis".to_string(), duration_ms: TTS_SYNTH_TIMEOUT_SECS * 1000 })
-                }
-            }
-        }
-        _ = cancel_synth => {
-            log::info!("Interaction {} cancelled during TTS synthesis.", context.id);
-            state.presence.set_state(&window, PresenceState::Cancelled);
-            state.is_interacting.store(false, Ordering::SeqCst);
-            return Ok(ProcessResult {
-                transcription,
-                thinking: assistant_resp.thinking,
-                response: response_text,
-                auto_listen: false,
-            });
-        }
+    let text = response.clone();
+    let synth_task = tokio::task::spawn_blocking(move || SpeechService::default().synthesize(&text, speed));
+    let wav = tokio::select! {
+        res = tokio::time::timeout(std::time::Duration::from_secs(TTS_SYNTH_TIMEOUT_SECS), synth_task) => match res {
+            Ok(Ok(Ok(path))) => Some(path),
+            Ok(Ok(Err(e))) => { log::error!("{}", ByteError::SynthesisFailed(e)); None }
+            Ok(Err(e)) => { log::error!("TTS task failed: {e}"); None }
+            Err(_) => { log::warn!("TTS synthesis timed out after {}s", TTS_SYNTH_TIMEOUT_SECS); None }
+        },
+        _ = ctx.cancellation.cancelled() => return cancelled(&state, &window, &ctx, &transcription),
     };
-
     telemetry.tts_synthesis_ms = synth_timer.elapsed_ms();
-    // TTFA: Exact turnaround time from silence detection until audio starts playing
     telemetry.ttfa_ms = telemetry.stt_ms + telemetry.llm_ms + telemetry.tool_ms + telemetry.tts_synthesis_ms;
 
-    // Check interaction validity before audio playback
-    if !is_interaction_valid(&context, &state) {
-        log::info!("Interaction {} superseded or cancelled before audio playback.", context.id);
-        state.presence.set_state(&window, PresenceState::Cancelled);
-        if let Ok(wav_path) = wav_path_res {
-            let _ = std::fs::remove_file(wav_path);
+    if let Some(wav_path) = wav {
+        if !is_interaction_valid(&ctx, &state) {
+            let _ = std::fs::remove_file(&wav_path);
+            return cancelled(&state, &window, &ctx, &transcription);
         }
-        state.is_interacting.store(false, Ordering::SeqCst);
-        return Ok(ProcessResult {
-            transcription,
-            thinking: assistant_resp.thinking,
-            response: response_text,
-            auto_listen: false,
-        });
-    }
-
-    // Step B: Audio Playback wrapped in tokio::select! for cancellation
-    let playback_timer = StageTimer::start();
-    if let Ok(wav_path) = wav_path_res {
         state.presence.set_state(&window, PresenceState::Speaking);
-        let cancel_play = context.cancellation.cancelled();
-        let play_task = tokio::task::spawn_blocking(move || {
-            let _ = window_clone.emit("speaking", &mood_clone);
-            let speech = SpeechService::default();
-            speech.play(&wav_path);
-            let _ = window_clone.emit("processing", ());
-            std::thread::sleep(std::time::Duration::from_millis(50));
-            let _ = window_clone.emit("speaking", "calm");
-            if is_farewell {
-                let _ = window_clone.hide();
-            }
-        });
-
+        let playback_timer = StageTimer::start();
+        let play_task = tokio::task::spawn_blocking(move || SpeechService::default().play(&wav_path));
         tokio::select! {
             res = tokio::time::timeout(std::time::Duration::from_secs(TTS_PLAY_TIMEOUT_SECS), play_task) => {
                 if res.is_err() {
-                    log::warn!("TTS playback exceeded timeout of {}s; stopping audio.", TTS_PLAY_TIMEOUT_SECS);
+                    log::warn!("Playback exceeded {}s; stopping audio.", TTS_PLAY_TIMEOUT_SECS);
                     audio::stop_audio();
                 }
             }
-            _ = cancel_play => {
-                log::info!("Interaction {} cancelled during audio playback.", context.id);
-                state.presence.set_state(&window, PresenceState::Cancelled);
+            _ = ctx.cancellation.cancelled() => {
                 audio::stop_audio();
+                return cancelled(&state, &window, &ctx, &transcription);
             }
         }
+        telemetry.playback_ms = playback_timer.elapsed_ms();
     }
-    telemetry.playback_ms = playback_timer.elapsed_ms();
     telemetry.total_pipeline_ms = pipeline_start.elapsed_ms();
+    telemetry.print_summary(&transcription, tool_used.as_deref());
 
-    // Clear active_interaction if this interaction is still the active one
-    if let Ok(mut active) = state.active_interaction.lock() {
-        if let Some(current) = active.as_ref() {
-            if current.id == context.id {
-                active.take();
-            }
-        }
+    finish(&state, &window, &ctx, PresenceState::Idle);
+    if is_farewell {
+        let _ = window.hide();
     }
-
-    state.presence.set_state(&window, PresenceState::Idle);
-    state.is_interacting.store(false, Ordering::SeqCst);
-
-    // Log structured telemetry breakdown table
-    telemetry.print_summary(&transcription, executed_tool_name.as_deref());
-
-    Ok(ProcessResult {
-        transcription,
-        thinking: assistant_resp.thinking,
-        response: response_text,
-        auto_listen,
-    })
+    Ok(reply(transcription, response, auto_listen))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::memory::ConversationTurn;
 
     #[test]
-    fn test_is_simple_greeting() {
-        assert!(is_simple_greeting("Hello"));
-        assert!(is_simple_greeting("hello,"));
-        assert!(is_simple_greeting("Hello, good morning."));
-        assert!(is_simple_greeting("Good morning!"));
-        assert!(is_simple_greeting("hi there..."));
-        assert!(is_simple_greeting("Hey Byte"));
-        assert!(is_simple_greeting("good evening?"));
-
-        // Substantive commands or queries must NOT be classified as simple greetings
-        assert!(!is_simple_greeting("Hey Byte, what CPU am I using?"));
-        assert!(!is_simple_greeting("Hello, what is the weather today?"));
-        assert!(!is_simple_greeting("good morning please open chrome"));
-        assert!(!is_simple_greeting("What is her brother in Chennai now?"));
-        assert!(!is_simple_greeting("set a timer for 10 minutes"));
+    fn test_confirmation_intent() {
+        assert!(confirmation_intent("Yes.") == ConfirmationIntent::Confirm);
+        assert!(confirmation_intent("go ahead") == ConfirmationIntent::Confirm);
+        assert!(confirmation_intent("No, don't") == ConfirmationIntent::Cancel);
+        assert!(confirmation_intent("yes, but open chrome first") == ConfirmationIntent::Unclear);
     }
 
     #[test]
-    fn test_sanitize_conversation_history_drops_trailing_user_turn() {
-        let history = vec![
-            ConversationTurn {
-                role: "user".to_string(),
-                message: "What is her brother in Chennai now?".to_string(),
-            },
-        ];
-
-        let sanitized = sanitize_conversation_history(&history);
-        assert!(sanitized.is_empty(), "Orphan trailing user turn must be dropped to prevent consecutive user turns");
-    }
-
-    #[test]
-    fn test_sanitize_conversation_history_enforces_strict_pairs() {
-        let history = vec![
-            ConversationTurn {
-                role: "user".to_string(),
-                message: "Who was Alan Turing?".to_string(),
-            },
-            ConversationTurn {
-                role: "assistant".to_string(),
-                message: "Alan Turing was a British mathematician and pioneer of computer science.".to_string(),
-            },
-            ConversationTurn {
-                role: "user".to_string(),
-                message: "What is her brother in Chennai now?".to_string(),
-            },
-        ];
-
-        let sanitized = sanitize_conversation_history(&history);
-        assert_eq!(sanitized.len(), 2, "Only the completed pair should be preserved");
-        assert_eq!(sanitized[0].role, "user");
-        assert_eq!(sanitized[0].content, "Who was Alan Turing?");
-        assert_eq!(sanitized[1].role, "assistant");
-    }
-
-    #[test]
-    fn test_sanitize_conversation_history_drops_consecutive_user_turns() {
-        let history = vec![
-            ConversationTurn {
-                role: "user".to_string(),
-                message: "First query".to_string(),
-            },
-            ConversationTurn {
-                role: "user".to_string(),
-                message: "Second query without response".to_string(),
-            },
-            ConversationTurn {
-                role: "assistant".to_string(),
-                message: "Answer to query".to_string(),
-            },
-        ];
-
-        let sanitized = sanitize_conversation_history(&history);
-        assert_eq!(sanitized.len(), 2);
-        assert_eq!(sanitized[0].content, "First query");
-        assert_eq!(sanitized[1].role, "assistant");
+    fn test_stop_commands() {
+        assert!(is_stop_command("stop"));
+        assert!(is_stop_command("please stop speaking"));
+        assert!(!is_stop_command("stop the music"));
     }
 
     #[test]
@@ -1096,34 +722,15 @@ mod tests {
 
         let timeout_err = ByteError::Timeout { stage: "transcription".to_string(), duration_ms: 10000 };
         assert!(timeout_err.to_user_friendly_message().contains("timed out"));
-
-        let tool_err = ByteError::ToolExecutionFailed {
-            tool: "organize_folder".to_string(),
-            error: "Permission denied".to_string(),
-        };
-        assert!(tool_err.to_user_friendly_message().contains("organize_folder"));
     }
 
     #[test]
     fn test_is_empty_or_noise() {
-        // Noise and empty strings must return true
-        assert!(is_empty_or_noise(""));
-        assert!(is_empty_or_noise("   "));
-        assert!(is_empty_or_noise("\n\t  "));
-        assert!(is_empty_or_noise("[BLANK_AUDIO]"));
-        assert!(is_empty_or_noise("[silence]"));
-        assert!(is_empty_or_noise("(sigh)"));
-        assert!(is_empty_or_noise("(cough)"));
-        assert!(is_empty_or_noise("..."));
-        assert!(is_empty_or_noise("???"));
-        assert!(is_empty_or_noise("---"));
-        assert!(is_empty_or_noise(" . . . "));
-
-        // Substantive speech must return false
-        assert!(!is_empty_or_noise("Hello"));
-        assert!(!is_empty_or_noise("What is my CPU usage?"));
-        assert!(!is_empty_or_noise("Open Chrome"));
-        assert!(!is_empty_or_noise("yes"));
-        assert!(!is_empty_or_noise("123"));
+        for noise in ["", "   ", "\n\t  ", "[BLANK_AUDIO]", "[silence]", "(sigh)", "...", "???", " . . . "] {
+            assert!(is_empty_or_noise(noise), "{noise:?} should be noise");
+        }
+        for speech in ["Hello", "What is my CPU usage?", "Open Chrome", "yes", "123"] {
+            assert!(!is_empty_or_noise(speech), "{speech:?} should be speech");
+        }
     }
 }

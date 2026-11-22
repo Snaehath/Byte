@@ -5,94 +5,132 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Byte</title>
     <link rel="icon" type="image/png" href="favicon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="style.css" />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600&display=swap"
-      rel="stylesheet"
-    />
   </head>
   <body>
-    <div class="presence-widget">
-      <button
-        class="orb-viewport"
-        id="talk-button"
-        type="button"
-        aria-label="Start talking to Byte"
-        title="Click to talk · Ctrl+B"
-      >
-        <canvas id="byte-orb-canvas" width="220" height="175" aria-hidden="true"></canvas>
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+      <symbol id="i-keyboard" viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M6.5 10h.01M10 10h.01M13.5 10h.01M17 10h.01M8 14h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="16" cy="7" r="2.2" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="10" cy="17" r="2.2" fill="none" stroke="currentColor" stroke-width="1.7"/></symbol>
+      <symbol id="i-close" viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+      <symbol id="i-send" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    </svg>
+
+    <main class="presence-widget">
+      <button class="orb-viewport" id="talk-button" type="button" aria-label="Start talking to Byte" title="Click to talk · Ctrl+B">
+        <canvas id="byte-orb-canvas" aria-hidden="true"></canvas>
       </button>
 
-      <div class="status-badge">
-        <span id="status-text" role="status" aria-live="polite"></span>
-        <button class="wake-toggle" id="wake-toggle" type="button" aria-label="Wake word setting is loading" title="Wake word" aria-pressed="false" aria-busy="true" disabled>◉</button>
-        <button class="text-toggle" id="text-toggle" type="button" aria-label="Send a message" title="Send a message" aria-expanded="false">
-          ⌨
-        </button>
-        <button class="model-settings-toggle" id="model-settings-toggle" type="button" aria-label="Model settings" title="Model settings">⚙</button>
+      <div class="status-pill" id="status-pill">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span id="status-text" role="status" aria-live="polite">Ready</span>
+        <span class="pill-actions">
+          <button class="icon-btn" id="text-toggle" type="button" aria-label="Type a message" title="Type a message" aria-expanded="false">
+            <svg><use href="#i-keyboard"/></svg>
+          </button>
+          <button class="icon-btn" id="settings-toggle" type="button" aria-label="Settings" title="Settings" aria-expanded="false">
+            <svg><use href="#i-settings"/></svg>
+          </button>
+        </span>
       </div>
-    </div>
+    </main>
 
-    <section class="conversation-panel" id="conversation-panel" aria-label="Conversation" hidden>
-      <header class="conversation-header">
-        <span class="conversation-title">Message Byte</span>
-        <button id="text-close" type="button" aria-label="Close conversation">×</button>
-      </header>
-      <div id="chat-view" class="panel-view">
-        <form class="text-form" id="text-form">
-          <textarea id="text-input" rows="2" maxlength="4000" aria-label="Message Byte" placeholder="Type a message…"></textarea>
-          <div class="text-form-footer">
-            <span id="text-feedback" role="status" aria-live="polite">Byte will speak its reply.</span>
-            <button id="text-send" type="submit">Send</button>
-          </div>
-        </form>
+    <section class="panel chat-panel" id="chat-panel" aria-label="Message Byte" hidden>
+      <form class="chat-form" id="text-form">
+        <textarea id="text-input" rows="2" maxlength="4000" aria-label="Message Byte" placeholder="Ask Byte anything…"></textarea>
+        <button class="send-btn" id="text-send" type="submit" aria-label="Send message" title="Send · Enter">
+          <svg><use href="#i-send"/></svg>
+        </button>
+      </form>
+      <div class="chat-footer">
+        <span id="text-feedback" role="status" aria-live="polite">Byte replies out loud · Enter to send</span>
+        <button class="link-btn" id="text-close" type="button">Close</button>
       </div>
     </section>
 
-    <section class="conversation-panel model-setup-panel" id="model-setup-panel" aria-label="AI model setup" hidden>
-      <header class="conversation-header">
-        <span class="conversation-title" id="model-setup-title">Choose how Byte works</span>
-        <button id="model-setup-close" type="button" aria-label="Close model settings">×</button>
+    <section class="panel settings-panel" id="settings-panel" aria-labelledby="settings-title" hidden>
+      <header class="panel-header">
+        <div>
+          <h1 id="settings-title">Settings</h1>
+          <p id="settings-subtitle">Byte runs fully on this device.</p>
+        </div>
+        <button class="icon-btn" id="settings-close" type="button" aria-label="Close settings" title="Close">
+          <svg><use href="#i-close"/></svg>
+        </button>
       </header>
-      <form class="model-setup-form" id="model-setup-form">
-        <label>Model type
-          <select id="model-provider">
-            <option value="ollama">Local · Ollama</option>
-            <option value="cloud">Cloud · API</option>
-          </select>
-        </label>
-        <p class="model-privacy" id="model-privacy"></p>
-        <div id="local-model-fields" class="model-fields">
-          <label>Ollama endpoint<input id="ollama-url" type="url" autocomplete="url" required /></label>
-          <label>Chat model
-            <select id="ollama-model" required aria-label="Select an installed Ollama chat model">
-              <option value="">Loading installed models…</option>
-            </select>
-          </label>
-          <div class="ollama-model-actions">
-            <button id="ollama-refresh-models" type="button">Refresh installed models</button>
-            <button id="ollama-pull-model" type="button">Download model</button>
+
+      <form class="settings-body" id="settings-form" novalidate>
+        <section class="group" aria-labelledby="g-models">
+          <h2 id="g-models">Models</h2>
+          <div class="card">
+            <div class="row" id="row-text">
+              <div class="row-main">
+                <span class="row-label">Conversation &amp; tools</span>
+                <code class="row-value" id="text-model-name">—</code>
+              </div>
+              <span class="badge" data-state="unknown">Checking</span>
+              <button class="btn btn-sm" type="button" data-pull hidden>Download</button>
+            </div>
+            <div class="row" id="row-vision">
+              <div class="row-main">
+                <span class="row-label">Vision</span>
+                <code class="row-value" id="vision-model-name">—</code>
+              </div>
+              <span class="badge" data-state="unknown">Checking</span>
+              <button class="btn btn-sm" type="button" data-pull hidden>Download</button>
+            </div>
           </div>
-          <span id="ollama-model-note" class="model-key-note" role="status" aria-live="polite"></span>
-          <label class="same-model-choice"><input id="use-same-model" type="checkbox" /> Use chat model for vision too</label>
-          <p id="same-model-note" class="model-privacy" hidden></p>
-          <label id="local-vision-field">Vision model<input id="vision-model" type="text" maxlength="120" /></label>
-          <label>Model to download<input id="ollama-model-download" type="text" maxlength="120" placeholder="e.g. ministral-3:8b" /></label>
-        </div>
-        <div id="cloud-model-fields" class="model-fields" hidden>
-          <label>API endpoint<input id="cloud-url" type="url" autocomplete="url" /></label>
-          <label>Chat model<input id="cloud-model" type="text" maxlength="120" /></label>
-          <label class="same-model-choice"><input id="cloud-use-same-model" type="checkbox" /> Use chat model for vision too</label>
-          <p id="cloud-same-model-note" class="model-privacy" hidden>Choose this only if the cloud model supports images.</p>
-          <label>Vision model <span class="optional-label">(optional)</span><input id="cloud-vision-model" type="text" maxlength="120" /></label>
-          <label>API key<input id="cloud-api-key" type="password" autocomplete="new-password" placeholder="Paste your provider API key" /></label>
-          <span id="cloud-key-note" class="model-key-note"></span>
-        </div>
-        <div class="model-setup-footer">
-          <span id="model-setup-feedback" role="status" aria-live="polite"></span>
-          <button id="model-setup-save" type="submit">Save</button>
-        </div>
+          <p class="hint">Models are fixed in this version and run locally through Ollama.</p>
+        </section>
+
+        <section class="group" aria-labelledby="g-conn">
+          <h2 id="g-conn">Ollama</h2>
+          <div class="card card-pad">
+            <label class="field">
+              <span class="row-label">Endpoint</span>
+              <span class="input-row">
+                <input id="ollama-url" type="url" autocomplete="off" spellcheck="false" placeholder="http://localhost:11434" required />
+                <button class="btn btn-sm" id="check-connection" type="button">Check</button>
+              </span>
+            </label>
+            <p class="conn-status" id="conn-status" data-state="unknown" role="status" aria-live="polite">
+              <span class="status-dot" aria-hidden="true"></span><span id="conn-message">Not checked yet</span>
+            </p>
+          </div>
+        </section>
+
+        <section class="group" aria-labelledby="g-voice">
+          <h2 id="g-voice">Voice</h2>
+          <div class="card">
+            <div class="row">
+              <div class="row-main">
+                <span class="row-label" id="wake-label">Wake word</span>
+                <span class="row-desc">Start listening hands-free</span>
+              </div>
+              <button class="switch" id="wake-toggle" type="button" role="switch" aria-checked="false" aria-labelledby="wake-label" disabled></button>
+            </div>
+          </div>
+        </section>
+
+        <section class="group" aria-labelledby="g-memory">
+          <h2 id="g-memory">Memory</h2>
+          <div class="card">
+            <div class="row">
+              <div class="row-main">
+                <span class="row-label">Saved memory</span>
+                <span class="row-desc">Your name and preferences. Timers are kept.</span>
+              </div>
+              <button class="btn btn-sm btn-danger" id="reset-memory" type="button">Reset</button>
+            </div>
+          </div>
+        </section>
       </form>
+
+      <footer class="panel-footer">
+        <span id="settings-feedback" role="status" aria-live="polite"></span>
+        <button class="btn btn-primary" id="settings-save" type="submit" form="settings-form">Save</button>
+      </footer>
     </section>
 
     <script src="orb.js"></script>

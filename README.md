@@ -1,3 +1,5 @@
+![Byte app icon](src-tauri/icons/128x128.png)
+
 # Byte
 
 Byte is a hands-free AI assistant for Windows, built with **Rust, Tauri, HTML, CSS, and JavaScript**. Talk to Byte with the wake word, click the orb, or press **Ctrl+B**. The floating orb shows when Byte is listening, thinking, or speaking; its controls appear when you move the pointer over it.
@@ -11,30 +13,31 @@ Byte is a hands-free AI assistant for Windows, built with **Rust, Tauri, HTML, C
 
 Some voice interactions continue by listening for another request. You can also open the compact message input and hear Byte's reply aloud.
 
-## Local and cloud AI
+## Local AI
 
-On first launch, choose a local Ollama model or an OpenAI-compatible cloud API. The choice can be changed later from the small settings icon shown when you hover over the orb. Cloud API keys are stored in Windows Credential Manager; requests are sent to the selected provider.
+Byte runs entirely on your device through [Ollama](https://ollama.com/download) and uses two fixed models:
 
-For local use, install [Ollama](https://ollama.com/download) and pull Byte's default models:
+| Purpose | Model |
+| --- | --- |
+| Conversation and tool calling | `granite4.2:3b` |
+| Screen understanding (vision) | `minicpm-v4.6:latest` |
 
 ```powershell
 ollama pull granite4.2:3b
-ollama pull llava
+ollama pull minicpm-v4.6:latest
 ```
 
-Byte detects models installed in Ollama and lets you select one or download another from model settings. Use separate chat and vision models, or enable the same-model option and choose an image-capable model. Byte uses `granite4.2:3b` for chat and `llava` for vision by default. Granite 4.2 is text-only; `granite3.2-vision:2b` is an alternative vision model. [Ministral 3](https://ollama.com/library/ministral-3) can handle both text and images with one model:
-
-```powershell
-ollama pull ministral-3:8b
-```
-
-Choose `ministral-3:8b` for both chat and vision in Byte's model settings to use it for both. The model download is about 6 GB; its Ollama listing currently requires Ollama 0.13.1. For cloud use, enter the provider's HTTPS endpoint, model name, and API key during setup.
+Models can't be changed in this version. Open Settings from the icon shown when you hover over the orb to set the Ollama endpoint, check that both models are installed (or download a missing one), toggle the wake word, and clear Byte's memory.
 
 ## Desktop capabilities
 
-Depending on the request and available configuration, Byte can open applications, control windows, organize files, access the clipboard, control audio and media, read system information, show notifications, and analyze the screen. Screen analysis asks for confirmation before capturing the screen and sending it to the selected model provider. Byte only saves preferences when asked and does not automatically reuse past conversations.
+Byte can open apps (including Microsoft Store apps), websites and folders, search the web, minimize/maximize/close the window you're working in, change volume, brightness and media playback, read or copy clipboard text, show notifications, set spoken timers, report CPU/RAM/uptime, and answer questions about your screen. Organizing a folder and looking at the screen always ask for a spoken "yes" first, and organizing never overwrites existing files.
 
-The wake word switch appears on hover and can pause background listening. The optional first-run spoken greeting is off by default; set `first_run_greeting_enabled` to `true` to enable it.
+Within one conversation Byte remembers the last few exchanges so follow-up questions work. This short-term context lives only in memory and resets after three idle minutes or a goodbye. Byte only saves your name and preferences when you ask it to remember them.
+
+## Running in the background
+
+Byte lives in the system tray. Left-click the tray icon to show the orb; right-click for Talk, Settings, the wake word switch, and Quit. Closing or hiding the orb (Ctrl+B) keeps Byte running in the tray, and launching Byte again brings the running copy forward. The optional first-run spoken greeting is off by default; set `first_run_greeting_enabled` to `true` to enable it.
 
 ## Project structure
 
@@ -47,7 +50,7 @@ The wake word switch appears on hover and can pause background listening. The op
 
 - Windows 10 or 11
 - Rust toolchain
-- Ollama with a configured model for local AI, or an OpenAI-compatible cloud API key
+- Ollama with `granite4.2:3b` and `minicpm-v4.6:latest` installed
 - Optional: Whisper and Piper executables and model files for local speech processing
 
 ## Run
@@ -57,5 +60,16 @@ From the project folder:
 ```bash
 cargo run --manifest-path src-tauri/Cargo.toml
 ```
+
+## Build
+
+Create a Windows installer from the project folder:
+
+```powershell
+Set-Location src-tauri
+cargo tauri build
+```
+
+The app is named **Byte**. Its source icon is `src-tauri/icons/icon.png`; Tauri uses the `.ico` and platform-specific icon files in `src-tauri/icons/` when packaging the app.
 
 Byte is an in-progress project. Available features depend on the current implementation and on which AI and speech services are installed and configured.

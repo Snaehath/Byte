@@ -21,6 +21,8 @@ pub fn start_recording(state: &AppState, window: tauri::WebviewWindow) -> Result
 
     let sample_rate = config.sample_rate().0;
     let channels = config.channels();
+    let audio_cfg = crate::config::AppConfig::load().audio;
+    let (silence_ms, min_recording_ms) = (audio_cfg.silence_duration_ms, audio_cfg.min_recording_ms);
 
     // Clear previous recording buffer
     {
@@ -80,7 +82,7 @@ pub fn start_recording(state: &AppState, window: tauri::WebviewWindow) -> Result
 
                     let silence_detected = {
                         if let Ok(mut v) = vad_clone.lock() {
-                            v.process_frame(data, sample_rate, channels, current_total, 1500, 1000)
+                            v.process_frame(data, sample_rate, channels, current_total, silence_ms, min_recording_ms)
                         } else {
                             false
                         }
@@ -91,7 +93,6 @@ pub fn start_recording(state: &AppState, window: tauri::WebviewWindow) -> Result
                         is_recording_cb.store(false, Ordering::SeqCst);
                         let _ = window_clone.emit("audio_level", 0.0f32);
                         play_processing_chime();
-                        let _ = window_clone.emit("processing", ());
                     }
                 },
                 err_fn,

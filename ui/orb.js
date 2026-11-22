@@ -1,464 +1,305 @@
 /**
- * Byte Energy Core Engine
- * 
- * 60+ FPS Living Quantum Energy Core
- * - 80% sphere + 20% living energy (90-95% circular base silhouette)
- * - 8-12 harmonic micro-perimeter wave synthesis (subtle ±3-6% breathing ripple, no amoeba bulges)
- * - High-lumen radiant white nucleus communicating machine intelligence
- * - Concentric gravitational particle orbits with 3D elliptical depth cueing
- * - Independent breathing outer aura with periodic cognitive expansion in Thinking state
- * - Audio-reactive surface micro-ripples and voice pulse modulation
- * - High-DPI auto-scaling for crisp 4K / Windows scaling displays
+ * Byte Orb
+ *
+ * A perfectly round sphere filled with slowly flowing, domain-warped color —
+ * rendered with a WebGL fragment shader (2D canvas fallback when WebGL is
+ * unavailable). Each presence state blends to its own palette and motion,
+ * and the sphere responds to live audio level.
  */
+
+const ORB_STATES = {
+  idle:      { colors: ['#1d3bff', '#62c6ff', '#e9f3ff'], speed: 0.16, swirl: 0.05, glow: 0.35, scale: 1.00 },
+  listening: { colors: ['#0a7cff', '#3fe0ff', '#f1fdff'], speed: 0.30, swirl: 0.10, glow: 0.55, scale: 1.03 },
+  thinking:  { colors: ['#5b21f6', '#b28dff', '#ffd6fb'], speed: 0.55, swirl: 0.45, glow: 0.50, scale: 0.97 },
+  speaking:  { colors: ['#1f4dff', '#3ad2ff', '#b8ffe6'], speed: 0.38, swirl: 0.12, glow: 0.60, scale: 1.02 },
+  cancelled: { colors: ['#3c4a63', '#8796ae', '#dfe6f0'], speed: 0.10, swirl: 0.02, glow: 0.18, scale: 0.96 },
+  error:     { colors: ['#b4232c', '#ff7a7a', '#ffe3e3'], speed: 0.14, swirl: 0.03, glow: 0.35, scale: 0.97 },
+};
+
+const VERT = `
+attribute vec2 aPos;
+void main() { gl_Position = vec4(aPos, 0.0, 1.0); }
+`;
+
+const FRAG = `
+precision highp float;
+uniform vec2  uRes;
+uniform float uPhase;
+uniform float uSwirl;
+uniform float uLevel;
+uniform float uGlow;
+uniform float uScale;
+uniform vec3  uC1;
+uniform vec3  uC2;
+uniform vec3  uC3;
+
+vec3 hash3(vec2 p) {
+  vec3 q = vec3(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)), dot(p, vec2(419.2, 371.9)));
+  return fract(sin(q) * 43758.5453);
+}
+
+float noise(vec2 p) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  float a = hash3(i).x;
+  float b = hash3(i + vec2(1.0, 0.0)).x;
+  float c = hash3(i + vec2(0.0, 1.0)).x;
+  float d = hash3(i + vec2(1.0, 1.0)).x;
+  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+float fbm(vec2 p) {
+  float v = 0.0;
+  float a = 0.5;
+  mat2 r = mat2(0.8, -0.6, 0.6, 0.8);
+  for (int i = 0; i < 4; i++) {
+    v += a * noise(p);
+    p = r * p * 2.02 + 7.3;
+    a *= 0.5;
+  }
+  return v;
+}
+
+mat2 rot(float a) { float c = cos(a), s = sin(a); return mat2(c, -s, s, c); }
+
+void main() {
+  float px = 2.0 / min(uRes.x, uRes.y);
+  vec2 p = (gl_FragCoord.xy - 0.5 * uRes) * px;   // -1..1 square space
+
+  float breathe = 0.012 * sin(uPhase * 3.2);
+  float R = 0.74 * uScale * (1.0 + breathe + uLevel * 0.075);
+  float r = length(p);
+
+  // Outer halo (premultiplied, additive)
+  float halo = exp(-max(r - R, 0.0) * 9.0) * smoothstep(R - 0.02, R + 0.01, r);
+  vec3 haloCol = mix(uC1, uC2, 0.6) * halo * (uGlow + uLevel * 0.6) * 0.55;
+  float haloA = halo * (uGlow + uLevel * 0.6) * 0.45;
+
+  float inside = 1.0 - smoothstep(R - px * 1.2, R + px * 0.6, r);
+  if (inside <= 0.0) {
+    gl_FragColor = vec4(haloCol, haloA);
+    return;
+  }
+
+  vec2 q = p / R;
+  float z = sqrt(max(0.0, 1.0 - dot(q, q)));
+
+  // Slight lens distortion so the fluid feels like it lives on a sphere
+  vec2 uv = q * (1.0 - 0.28 * (1.0 - z));
+  uv = rot(uPhase * uSwirl) * uv;
+
+  float t = uPhase;
+  vec2 w = vec2(fbm(uv * 1.4 + vec2(t * 0.35, -t * 0.22)),
+                fbm(uv * 1.4 + vec2(-t * 0.18, t * 0.30) + 4.7));
+  float n1 = fbm(uv * 1.15 + w * (1.6 + uLevel * 1.2) + vec2(0.0, t * 0.12));
+  float n2 = fbm(uv * 0.9 - w * 1.1 + vec2(t * 0.08, 2.3));
+
+  vec3 col = mix(uC1, uC2, smoothstep(0.28, 0.72, n1));
+  col = mix(col, uC3, smoothstep(0.52, 0.86, n2) * 0.85);
+
+  // Soft sphere shading
+  vec3 N = normalize(vec3(q, z));
+  vec3 L = normalize(vec3(-0.45, 0.55, 0.75));
+  float diff = 0.62 + 0.38 * max(dot(N, L), 0.0);
+  col *= diff;
+
+  // Inner light that rises with voice energy
+  col += uC3 * pow(z, 3.0) * (0.10 + uLevel * 0.35);
+
+  // Fresnel rim
+  float fres = pow(1.0 - z, 3.0);
+  col = mix(col, uC2 * 1.15 + 0.1, fres * 0.55);
+
+  // Gentle specular sheen
+  vec3 H = normalize(L + vec3(0.0, 0.0, 1.0));
+  float spec = pow(max(dot(N, H), 0.0), 38.0);
+  col += vec3(1.0) * spec * 0.35;
+
+  col = clamp(col, 0.0, 1.0);
+  gl_FragColor = vec4(col * inside + haloCol * (1.0 - inside), inside + haloA * (1.0 - inside));
+}
+`;
+
+function hexToRgb(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
+}
 
 class ByteLivingOrb {
   constructor(canvas) {
-    if (!canvas) {
-      console.error('ByteLivingOrb: canvas element is null or undefined!');
-      return;
-    }
+    if (!canvas) throw new Error('ByteLivingOrb: canvas is required');
     this.canvas = canvas;
-    this.ctx = canvas.getContext('2d');
+    this.state = 'idle';
+    this.phase = Math.random() * 100;
+    this.level = 0;
+    this.targetLevel = 0;
+    this.reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
 
-    this.width = 220;
-    this.height = 175;
-    this.setupHighDpi();
-
-    this.centerX = this.width / 2;
-    this.centerY = this.height / 2 - 2;
-
-    // Clock
-    this.time = 0;
-    this.lastFrameTime = performance.now();
-
-    // State management & continuous morphing
-    this.currentState = 'idle';
-    this.targetState = 'idle';
-    this.stateTransition = 1.0;
-
-    // Audio reactivity
-    this.audioLevel = 0.0;
-    this.targetAudioLevel = 0.0;
-
-    // Gravitational orbital particles (3 distinct energy tracks)
-    this.particles = [];
-    this.initOrbitalParticles(28);
-
-    // Energy Core visual presets per presence state
-    this.presets = {
-      idle: {
-        baseRadius: 45,
-        waveAmp: 1.8,            // ±4% deformation (96% circular)
-        speed: 0.028,            // Slow, majestic breathing
-        auraRadius: 64,
-        auraPulseAmp: 4.0,
-        coreBrightness: 0.95,
-        colorCore: '#ffffff',
-        colorInnerGlow: '#6c5ce7',
-        colorMid: '#0984e3',
-        colorEdge: '#00cec9',
-        colorAura: 'rgba(9, 132, 227, 0.22)',
-        particleSpeed: 0.55,     // Serene, slow cosmic drift (~30s orbit)
-        particleTrackRadius: 48,
-        compression: 0.0,
-      },
-      listening: {
-        baseRadius: 48,
-        waveAmp: 2.4,            // Subtle acoustic perturbation
-        speed: 0.045,
-        auraRadius: 72,
-        auraPulseAmp: 6.0,
-        coreBrightness: 1.0,
-        colorCore: '#ffffff',
-        colorInnerGlow: '#00d2d3',
-        colorMid: '#0984e3',
-        colorEdge: '#74b9ff',
-        colorAura: 'rgba(0, 210, 211, 0.35)',
-        particleSpeed: 0.85,     // Gentle attentiveness
-        particleTrackRadius: 52,
-        compression: 0.0,
-      },
-      thinking: {
-        baseRadius: 42,          // Concentrated / slightly compressed core
-        waveAmp: 2.0,            // Focused traveling perimeter wave
-        speed: 0.08,             // Rapid cognitive energy flow
-        auraRadius: 68,
-        auraPulseAmp: 9.0,       // 1.5-second rhythmic brainwave pulse
-        coreBrightness: 1.15,    // High-lumen intense white center
-        colorCore: '#ffffff',
-        colorInnerGlow: '#a29bfe',
-        colorMid: '#6c5ce7',
-        colorEdge: '#e056fd',
-        colorAura: 'rgba(108, 92, 231, 0.38)',
-        particleSpeed: 1.5,      // Controlled cognitive acceleration
-        particleTrackRadius: 44, // Tight gravitational pull
-        compression: 3.0,
-      },
-      speaking: {
-        baseRadius: 47,
-        waveAmp: 2.8,            // Voice ripple modulation
-        speed: 0.05,
-        auraRadius: 78,
-        auraPulseAmp: 8.0,
-        coreBrightness: 1.05,
-        colorCore: '#ffffff',
-        colorInnerGlow: '#00cec9',
-        colorMid: '#00b894',
-        colorEdge: '#55efc4',
-        colorAura: 'rgba(0, 184, 148, 0.36)',
-        particleSpeed: 0.95,     // Harmonic speech orbit
-        particleTrackRadius: 54,
-        compression: 0.0,
-      },
-      cancelled: {
-        baseRadius: 38,
-        waveAmp: 1.2,
-        speed: 0.04,
-        auraRadius: 54,
-        auraPulseAmp: 2.0,
-        coreBrightness: 0.75,
-        colorCore: '#ffffff',
-        colorInnerGlow: '#fab1a0',
-        colorMid: '#e17055',
-        colorEdge: '#d63031',
-        colorAura: 'rgba(214, 48, 49, 0.25)',
-        particleSpeed: 0.35,     // Calming deceleration
-        particleTrackRadius: 42,
-        compression: 4.0,
-      },
+    const s = ORB_STATES.idle;
+    this.current = {
+      c: s.colors.map(hexToRgb),
+      speed: s.speed, swirl: s.swirl, glow: s.glow, scale: s.scale,
     };
+    this.lastTime = performance.now();
 
-    this.currentParams = { ...this.presets.idle };
-
-    // Bind and start rendering loop
-    this.render = this.render.bind(this);
-    requestAnimationFrame(this.render);
+    this.gl = this.initGl();
+    if (!this.gl) this.ctx = canvas.getContext('2d');
+    this.resize();
+    window.addEventListener('resize', () => this.resize());
+    this.frame = this.frame.bind(this);
+    requestAnimationFrame(this.frame);
   }
 
-  setupHighDpi() {
-    const dpr = window.devicePixelRatio || 1;
-    this.canvas.width = this.width * dpr;
-    this.canvas.height = this.height * dpr;
-    this.canvas.style.width = `${this.width}px`;
-    this.canvas.style.height = `${this.height}px`;
-    this.ctx.scale(dpr, dpr);
-  }
+  initGl() {
+    let gl = null;
+    try {
+      gl = this.canvas.getContext('webgl', { premultipliedAlpha: true, alpha: true, antialias: true });
+    } catch (_) { /* fall through to 2D */ }
+    if (!gl) return null;
 
-  initOrbitalParticles(count = 20) {
-    this.particles = [];
-    // 3 orbital lanes: inner (lane 0), mid (lane 1), outer (lane 2)
-    for (let i = 0; i < count; i++) {
-      const lane = i % 3;
-      const baseDistance = 44 + lane * 13 + (Math.random() - 0.5) * 6;
-      // Base angular speed in radians per second (~0.20 - 0.35 rad/s)
-      const baseRadPerSec = 0.20 + (2 - lane) * 0.07;
-      this.particles.push({
-        lane,
-        angle: (i / count) * Math.PI * 2 + Math.random() * 0.4,
-        distance: baseDistance,
-        baseDistance,
-        speed: baseRadPerSec * (Math.random() > 0.25 ? 1 : -1),
-        size: 1.0 + Math.random() * 1.5,
-        pulseOffset: Math.random() * Math.PI * 2,
-        tilt: 0.72 + (lane * 0.05), // Elliptical 3D tilt
-      });
+    const compile = (type, src) => {
+      const sh = gl.createShader(type);
+      gl.shaderSource(sh, src);
+      gl.compileShader(sh);
+      if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+        console.error('Orb shader error:', gl.getShaderInfoLog(sh));
+        return null;
+      }
+      return sh;
+    };
+    const vs = compile(gl.VERTEX_SHADER, VERT);
+    const fs = compile(gl.FRAGMENT_SHADER, FRAG);
+    if (!vs || !fs) return null;
+
+    const prog = gl.createProgram();
+    gl.attachShader(prog, vs);
+    gl.attachShader(prog, fs);
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+      console.error('Orb program link error:', gl.getProgramInfoLog(prog));
+      return null;
     }
+    gl.useProgram(prog);
+
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+    const loc = gl.getAttribLocation(prog, 'aPos');
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+
+    this.u = {};
+    for (const name of ['uRes', 'uPhase', 'uSwirl', 'uLevel', 'uGlow', 'uScale', 'uC1', 'uC2', 'uC3']) {
+      this.u[name] = gl.getUniformLocation(prog, name);
+    }
+    gl.clearColor(0, 0, 0, 0);
+    return gl;
   }
 
-  setState(newState) {
-    if (this.presets[newState] && newState !== this.targetState) {
-      this.targetState = newState;
-      this.stateTransition = 0.0;
+  resize() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+    const w = Math.max(1, Math.round((this.canvas.clientWidth || 172) * dpr));
+    const h = Math.max(1, Math.round((this.canvas.clientHeight || 172) * dpr));
+    if (this.canvas.width !== w || this.canvas.height !== h) {
+      this.canvas.width = w;
+      this.canvas.height = h;
     }
+    if (this.gl) this.gl.viewport(0, 0, w, h);
+  }
+
+  setState(state) {
+    this.state = ORB_STATES[state] ? state : 'idle';
   }
 
   setAudioLevel(level) {
-    this.targetAudioLevel = Math.max(0.0, Math.min(1.0, level));
+    const v = Number(level);
+    this.targetLevel = Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0;
   }
 
-  interpolateParams(from, to, t) {
-    const lerp = (a, b, f) => a + (b - a) * f;
-    return {
-      baseRadius: lerp(from.baseRadius, to.baseRadius, t),
-      waveAmp: lerp(from.waveAmp, to.waveAmp, t),
-      speed: lerp(from.speed, to.speed, t),
-      auraRadius: lerp(from.auraRadius, to.auraRadius, t),
-      auraPulseAmp: lerp(from.auraPulseAmp, to.auraPulseAmp, t),
-      coreBrightness: lerp(from.coreBrightness, to.coreBrightness, t),
-      particleSpeed: lerp(from.particleSpeed, to.particleSpeed, t),
-      particleTrackRadius: lerp(from.particleTrackRadius, to.particleTrackRadius, t),
-      compression: lerp(from.compression, to.compression, t),
-      colorCore: t > 0.5 ? to.colorCore : from.colorCore,
-      colorInnerGlow: t > 0.5 ? to.colorInnerGlow : from.colorInnerGlow,
-      colorMid: t > 0.5 ? to.colorMid : from.colorMid,
-      colorEdge: t > 0.5 ? to.colorEdge : from.colorEdge,
-      colorAura: t > 0.5 ? to.colorAura : from.colorAura,
-    };
+  frame(now) {
+    const dt = Math.min(0.05, (now - this.lastTime) / 1000);
+    this.lastTime = now;
+
+    const target = ORB_STATES[this.state];
+    const k = 1 - Math.exp(-dt * 3.5);
+    const cur = this.current;
+    for (let i = 0; i < 3; i++) {
+      const tc = hexToRgb(target.colors[i]);
+      for (let j = 0; j < 3; j++) cur.c[i][j] += (tc[j] - cur.c[i][j]) * k;
+    }
+    cur.speed += (target.speed - cur.speed) * k;
+    cur.swirl += (target.swirl - cur.swirl) * k;
+    cur.glow += (target.glow - cur.glow) * k;
+    cur.scale += (target.scale - cur.scale) * k;
+
+    const attack = this.targetLevel > this.level ? 18 : 6;
+    this.level += (this.targetLevel - this.level) * (1 - Math.exp(-dt * attack));
+
+    const motion = this.reducedMotion ? 0.25 : 1;
+    this.phase += dt * (cur.speed + this.level * 0.6) * motion;
+
+    if (this.gl) this.drawGl(); else this.draw2d();
+    requestAnimationFrame(this.frame);
   }
 
-  render(timestamp) {
-    const dt = Math.min((timestamp - this.lastFrameTime) / 1000, 0.1);
-    this.lastFrameTime = timestamp;
-    this.time += dt;
-
-    // Smooth state morphing
-    if (this.stateTransition < 1.0) {
-      this.stateTransition = Math.min(1.0, this.stateTransition + dt * 3.5);
-      const fromPreset = this.presets[this.currentState] || this.presets.idle;
-      const toPreset = this.presets[this.targetState] || this.presets.idle;
-      this.currentParams = this.interpolateParams(fromPreset, toPreset, this.stateTransition);
-      if (this.stateTransition >= 1.0) {
-        this.currentState = this.targetState;
-      }
-    }
-
-    // Audio reactivity smoothing
-    this.audioLevel += (this.targetAudioLevel - this.audioLevel) * 0.28;
-
-    // Clear viewport
-    this.ctx.clearRect(0, 0, this.width, this.height);
-
-    // 1. Draw back-half orbital particles (behind core depth illusion)
-    this.drawParticles(dt, true);
-
-    // 2. Draw dual-layer breathing aura
-    this.drawLuminousAura();
-
-    // 3. Draw high-lumen living Energy Core
-    this.drawEnergyCore();
-
-    // 4. Draw front-half orbital particles (in front of core)
-    this.drawParticles(dt, false);
-
-    requestAnimationFrame(this.render);
+  drawGl() {
+    const gl = this.gl;
+    const c = this.current;
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.uniform2f(this.u.uRes, this.canvas.width, this.canvas.height);
+    gl.uniform1f(this.u.uPhase, this.phase);
+    gl.uniform1f(this.u.uSwirl, c.swirl);
+    gl.uniform1f(this.u.uLevel, this.level);
+    gl.uniform1f(this.u.uGlow, c.glow);
+    gl.uniform1f(this.u.uScale, c.scale);
+    gl.uniform3fv(this.u.uC1, c.c[0]);
+    gl.uniform3fv(this.u.uC2, c.c[1]);
+    gl.uniform3fv(this.u.uC3, c.c[2]);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
 
-  /**
-   * Dual-Layer Atmospheric Aura:
-   * Inner halo provides soft bloom; outer aura breathes independently
-   * In 'thinking' state, pulses outward periodically every ~1.5s.
-   */
-  drawLuminousAura() {
-    const params = this.currentParams;
-    const isThinking = this.targetState === 'thinking' || this.currentState === 'thinking';
-    
-    // Cognitive pulse every ~1.5 seconds during thinking
-    let thinkingPulse = 0.0;
-    if (isThinking) {
-      const cycle = (this.time % 1.5) / 1.5; // 0.0 to 1.0
-      thinkingPulse = Math.sin(cycle * Math.PI) * params.auraPulseAmp * 1.5;
+  draw2d() {
+    const ctx = this.ctx;
+    const { width: w, height: h } = this.canvas;
+    const c = this.current;
+    const rgb = (v, a = 1) => `rgba(${v.map((x) => Math.round(x * 255)).join(',')},${a})`;
+    const cx = w / 2;
+    const cy = h / 2;
+    const R = Math.min(w, h) * 0.37 * c.scale * (1 + 0.012 * Math.sin(this.phase * 3.2) + this.level * 0.075);
+
+    ctx.clearRect(0, 0, w, h);
+    const halo = ctx.createRadialGradient(cx, cy, R * 0.9, cx, cy, R * 1.35);
+    halo.addColorStop(0, rgb(c.c[1], 0.35 * (c.glow + this.level)));
+    halo.addColorStop(1, rgb(c.c[1], 0));
+    ctx.fillStyle = halo;
+    ctx.fillRect(0, 0, w, h);
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, R, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.fillStyle = rgb(c.c[0]);
+    ctx.fillRect(cx - R, cy - R, R * 2, R * 2);
+    const blobs = [[c.c[1], 0.9, 0], [c.c[2], 0.6, 2.1], [c.c[1], 0.7, 4.2]];
+    for (const [col, size, off] of blobs) {
+      const a = this.phase * (0.8 + c.swirl) + off;
+      const bx = cx + Math.cos(a) * R * 0.45;
+      const by = cy + Math.sin(a * 1.3) * R * 0.45;
+      const g = ctx.createRadialGradient(bx, by, 0, bx, by, R * size);
+      g.addColorStop(0, rgb(col, 0.85));
+      g.addColorStop(1, rgb(col, 0));
+      ctx.fillStyle = g;
+      ctx.fillRect(cx - R, cy - R, R * 2, R * 2);
     }
-
-    const audioPulse = this.audioLevel * 14.0;
-    const breathingCycle = Math.sin(this.time * 1.8) * params.auraPulseAmp;
-    const currentAuraRadius = Math.max(20, params.auraRadius + breathingCycle + thinkingPulse + audioPulse);
-
-    this.ctx.save();
-
-    // 1. Outer Ethereal Atmosphere
-    const outerGrad = this.ctx.createRadialGradient(
-      this.centerX,
-      this.centerY,
-      params.baseRadius * 0.7,
-      this.centerX,
-      this.centerY,
-      currentAuraRadius
-    );
-    outerGrad.addColorStop(0, params.colorAura);
-    outerGrad.addColorStop(0.65, params.colorAura.replace(/[\d\.]+\)$/, '0.08)'));
-    outerGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
-
-    this.ctx.beginPath();
-    this.ctx.arc(this.centerX, this.centerY, currentAuraRadius, 0, Math.PI * 2);
-    this.ctx.fillStyle = outerGrad;
-    this.ctx.fill();
-
-    // 2. Inner Energy Sheen (tight corona hugging the nucleus)
-    const innerCoronaRadius = params.baseRadius + 8.0 + (isThinking ? Math.sin(this.time * 6.0) * 2.0 : 0);
-    const coronaGrad = this.ctx.createRadialGradient(
-      this.centerX,
-      this.centerY,
-      params.baseRadius * 0.4,
-      this.centerX,
-      this.centerY,
-      innerCoronaRadius
-    );
-    coronaGrad.addColorStop(0, 'rgba(255, 255, 255, 0.25)');
-    coronaGrad.addColorStop(0.5, params.colorInnerGlow);
-    coronaGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
-
-    this.ctx.beginPath();
-    this.ctx.arc(this.centerX, this.centerY, innerCoronaRadius, 0, Math.PI * 2);
-    this.ctx.fillStyle = coronaGrad;
-    this.ctx.fill();
-
-    this.ctx.restore();
-  }
-
-  /**
-   * Living Energy Core:
-   * 80% sphere + 20% living energy.
-   * High-harmonic subtle wave synthesis (8-12 smooth micro-waves, ±3-6% radius deviation).
-   * Luminous radiant white intelligence center, rich cyan/violet depth, no amoeba bulges.
-   */
-  drawEnergyCore() {
-    const params = this.currentParams;
-    const pointsCount = 64;
-    const angleStep = (Math.PI * 2) / pointsCount;
-    const isThinking = this.targetState === 'thinking' || this.currentState === 'thinking';
-
-    // Base radius with subtle compression in thinking/cancelled states
-    const breathing = Math.sin(this.time * 2.2) * 1.2;
-    const effectiveRadius = Math.max(12, params.baseRadius - params.compression + breathing);
-
-    // Audio reactivity micro-ripples
-    const audioRipple = this.audioLevel * 3.5;
-
-    // Synthesize perimeter points
-    const points = [];
-    for (let i = 0; i < pointsCount; i++) {
-      const angle = i * angleStep;
-
-      // 8 to 12 smooth harmonic waves (subtle ±3% to 6% ripple, never random amoeba blobs)
-      const wave1 = Math.sin(angle * 8.0 + this.time * 2.6) * (params.waveAmp * 0.55);
-      const wave2 = Math.cos(angle * 10.0 - this.time * 2.1) * (params.waveAmp * 0.35);
-      const wave3 = Math.sin(angle * 12.0 + this.time * 3.4) * (params.waveAmp * 0.20);
-
-      // Thinking: a focused energy wave sweeping smoothly around the perimeter
-      let travelingWave = 0.0;
-      if (isThinking) {
-        travelingWave = Math.sin(angle * 4.0 - this.time * 5.5) * 1.6;
-      }
-
-      // Acoustic vibration during voice input / output
-      const soundWave = Math.sin(angle * 14.0 + this.time * 16.0) * audioRipple;
-
-      const r = effectiveRadius + wave1 + wave2 + wave3 + travelingWave + soundWave;
-      points.push({
-        x: this.centerX + Math.cos(angle) * r,
-        y: this.centerY + Math.sin(angle) * r,
-      });
-    }
-
-    this.ctx.save();
-    this.ctx.beginPath();
-
-    // Silky smooth closed spline via quadratic midpoints
-    const len = points.length;
-    let midX = (points[0].x + points[1].x) / 2;
-    let midY = (points[0].y + points[1].y) / 2;
-    this.ctx.moveTo(midX, midY);
-
-    for (let i = 1; i < len; i++) {
-      const nextIdx = (i + 1) % len;
-      midX = (points[i].x + points[nextIdx].x) / 2;
-      midY = (points[i].y + points[nextIdx].y) / 2;
-      this.ctx.quadraticCurveTo(points[i].x, points[i].y, midX, midY);
-    }
-    midX = (points[0].x + points[1].x) / 2;
-    midY = (points[0].y + points[1].y) / 2;
-    this.ctx.quadraticCurveTo(points[0].x, points[0].y, midX, midY);
-    this.ctx.closePath();
-
-    // Radiant Intelligence Nucleus (pure intense white core -> luminous mid -> deep electric shell)
-    const focalShiftX = Math.sin(this.time * 1.2) * 2.5;
-    const focalShiftY = Math.cos(this.time * 1.2) * 2.5;
-    const coreGrad = this.ctx.createRadialGradient(
-      this.centerX + focalShiftX,
-      this.centerY + focalShiftY,
-      1,
-      this.centerX,
-      this.centerY,
-      effectiveRadius + 4
-    );
-
-    // Brilliant white center communicates AI consciousness
-    coreGrad.addColorStop(0, '#ffffff');
-    coreGrad.addColorStop(0.22, '#ffffff');
-    coreGrad.addColorStop(0.42, params.colorInnerGlow);
-    coreGrad.addColorStop(0.76, params.colorMid);
-    coreGrad.addColorStop(0.96, params.colorEdge);
-    coreGrad.addColorStop(1.0, params.colorInnerGlow);
-
-    this.ctx.fillStyle = coreGrad;
-    this.ctx.shadowBlur = (16 + this.audioLevel * 14) * params.coreBrightness;
-    this.ctx.shadowColor = params.colorInnerGlow;
-    this.ctx.fill();
-
-    // Delicate translucent luminous rim (thin crystalline energy shell)
-    this.ctx.lineWidth = 1.2;
-    this.ctx.strokeStyle = `rgba(255, 255, 255, ${Math.min(0.85, 0.45 * params.coreBrightness + this.audioLevel * 0.3)})`;
-    this.ctx.stroke();
-
-    // Intense high-lumen center spark
-    const sparkRadius = Math.max(3, effectiveRadius * 0.22);
-    const sparkGrad = this.ctx.createRadialGradient(
-      this.centerX + focalShiftX * 0.5,
-      this.centerY + focalShiftY * 0.5,
-      0,
-      this.centerX,
-      this.centerY,
-      sparkRadius
-    );
-    sparkGrad.addColorStop(0, `rgba(255, 255, 255, ${Math.min(1.0, 0.95 * params.coreBrightness)})`);
-    sparkGrad.addColorStop(0.7, 'rgba(255, 255, 255, 0.6)');
-    sparkGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
-
-    this.ctx.beginPath();
-    this.ctx.arc(this.centerX, this.centerY, sparkRadius, 0, Math.PI * 2);
-    this.ctx.fillStyle = sparkGrad;
-    this.ctx.fill();
-
-    this.ctx.restore();
-  }
-
-  /**
-   * Gravitational Orbital Particles:
-   * Particles orbit in 3 distinct elliptical tracks with front/back 3D depth cueing.
-   * Thinking state accelerates orbit velocity and tightens the track.
-   */
-  drawParticles(dt, isBackHalf) {
-    const params = this.currentParams;
-    const isThinking = this.targetState === 'thinking' || this.currentState === 'thinking';
-
-    this.ctx.save();
-
-    for (const p of this.particles) {
-      // Accelerate orbit in thinking state or on audio response (scaled by dt for frame-rate independence)
-      const speedMultiplier = params.particleSpeed * (isThinking ? 1.4 : 1.0) * (1.0 + this.audioLevel * 0.8);
-      p.angle += p.speed * speedMultiplier * dt;
-
-      // Elliptical coordinate projection
-      const sinA = Math.sin(p.angle);
-      const cosA = Math.cos(p.angle);
-
-      // Distinguish front half from back half for 3D occlusion
-      const inBack = sinA < 0;
-      if (inBack !== isBackHalf) continue;
-
-      // Gravitational pull: tracks tighten during thinking
-      const trackDist = params.particleTrackRadius + (p.lane * 11) + Math.sin(this.time * 1.2 + p.pulseOffset) * 2.0;
-      const px = this.centerX + cosA * trackDist;
-      const py = this.centerY + sinA * (trackDist * p.tilt);
-
-      // Depth modulation: front particles are brighter and slightly larger
-      const depthAlpha = inBack ? 0.35 : 0.85;
-      const alpha = depthAlpha * (0.6 + Math.sin(this.time * 3.5 + p.pulseOffset) * 0.4);
-      const size = inBack ? p.size * 0.75 : p.size * (1.0 + this.audioLevel * 0.4);
-
-      this.ctx.beginPath();
-      this.ctx.arc(px, py, Math.max(0.6, size), 0, Math.PI * 2);
-      this.ctx.fillStyle = `rgba(255, 255, 255, ${Math.max(0, Math.min(1, alpha)).toFixed(2)})`;
-      this.ctx.shadowBlur = inBack ? 2 : 6;
-      this.ctx.shadowColor = params.colorInnerGlow;
-      this.ctx.fill();
-    }
-
-    this.ctx.restore();
+    const shade = ctx.createRadialGradient(cx - R * 0.35, cy - R * 0.4, R * 0.1, cx, cy, R);
+    shade.addColorStop(0, 'rgba(255,255,255,0.18)');
+    shade.addColorStop(0.7, 'rgba(0,0,0,0)');
+    shade.addColorStop(1, 'rgba(0,0,0,0.22)');
+    ctx.fillStyle = shade;
+    ctx.fillRect(cx - R, cy - R, R * 2, R * 2);
+    ctx.restore();
   }
 }
 
-// Attach to window global
-if (typeof window !== 'undefined') {
-  window.ByteLivingOrb = ByteLivingOrb;
-}
+window.ByteLivingOrb = ByteLivingOrb;

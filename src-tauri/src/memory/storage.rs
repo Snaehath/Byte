@@ -1,11 +1,6 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use crate::memory::manager::ByteMemory;
 use crate::config::paths::BytePaths;
-
-pub trait MemoryStorage: Send + Sync {
-    fn load(&self) -> Result<ByteMemory, String>;
-    fn save(&self, memory: &ByteMemory) -> Result<(), String>;
-}
 
 pub struct JsonFileStorage {
     pub path: PathBuf,
@@ -20,15 +15,7 @@ impl Default for JsonFileStorage {
 }
 
 impl JsonFileStorage {
-    pub fn new<P: AsRef<Path>>(path: P) -> Self {
-        Self {
-            path: path.as_ref().to_path_buf(),
-        }
-    }
-}
-
-impl MemoryStorage for JsonFileStorage {
-    fn load(&self) -> Result<ByteMemory, String> {
+    pub fn load(&self) -> Result<ByteMemory, String> {
         if self.path.exists() {
             let content = std::fs::read_to_string(&self.path)
                 .map_err(|e| format!("Failed to read memory file: {}", e))?;
@@ -41,7 +28,7 @@ impl MemoryStorage for JsonFileStorage {
         Ok(default_memory)
     }
 
-    fn save(&self, memory: &ByteMemory) -> Result<(), String> {
+    pub fn save(&self, memory: &ByteMemory) -> Result<(), String> {
         let content = serde_json::to_string_pretty(memory)
             .map_err(|e| format!("Failed to serialize memory: {}", e))?;
         if let Some(parent) = self.path.parent() {

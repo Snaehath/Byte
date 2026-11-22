@@ -2,19 +2,20 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use crate::config::paths::BytePaths;
 
+/// Fixed local model used for conversation and tool calling.
+pub const TEXT_MODEL: &str = "granite4.2:3b";
+/// Fixed local model used for screen understanding.
+pub const VISION_MODEL: &str = "minicpm-v4.6:latest";
+pub const DEFAULT_OLLAMA_URL: &str = "http://localhost:11434/v1/chat/completions";
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
 pub struct LlmConfig {
-    pub provider: String,
-    pub ollama_url: String,        // default "http://localhost:11434/v1/chat/completions"
-    pub ollama_model: String,      // default "granite4.2:3b"
+    pub ollama_url: String,
+    pub ollama_model: String,
     pub vision_model: String,
-    pub use_same_model: bool,
-    pub cloud_url: String,
-    pub cloud_model: String,
-    pub cloud_vision_model: String,
     pub setup_complete: bool,
-    pub reasoning_effort: String,  // "low" for Granite fast answering
+    pub reasoning_effort: String,
     pub temperature: f32,
     pub max_tokens: u32,
 }
@@ -22,19 +23,29 @@ pub struct LlmConfig {
 impl Default for LlmConfig {
     fn default() -> Self {
         Self {
-            provider: "ollama".to_string(),
-            ollama_url: "http://localhost:11434/v1/chat/completions".to_string(),
-            ollama_model: "granite4.2:3b".to_string(),
-            vision_model: "llava".to_string(),
-            use_same_model: false,
-            cloud_url: "https://api.openai.com/v1/chat/completions".to_string(),
-            cloud_model: String::new(),
-            cloud_vision_model: String::new(),
+            ollama_url: DEFAULT_OLLAMA_URL.to_string(),
+            ollama_model: TEXT_MODEL.to_string(),
+            vision_model: VISION_MODEL.to_string(),
             setup_complete: false,
             reasoning_effort: "low".to_string(),
             temperature: 0.2,
             max_tokens: 1024,
         }
+    }
+}
+
+impl LlmConfig {
+    /// Models are not user-configurable for now; always pin them.
+    fn enforce_fixed_models(&mut self) -> bool {
+        let changed = self.ollama_model != TEXT_MODEL
+            || self.vision_model != VISION_MODEL
+            || self.ollama_url.trim().is_empty();
+        self.ollama_model = TEXT_MODEL.to_string();
+        self.vision_model = VISION_MODEL.to_string();
+        if self.ollama_url.trim().is_empty() {
+            self.ollama_url = DEFAULT_OLLAMA_URL.to_string();
+        }
+        changed
     }
 }
 
@@ -98,8 +109,7 @@ impl AppConfig {
         if path.exists() {
             if let Ok(content) = std::fs::read_to_string(&path) {
                 if let Ok(mut cfg) = serde_json::from_str::<AppConfig>(&content) {
-                    if cfg.llm.ollama_model == "qwen3-4b:latest" || cfg.llm.ollama_model.is_empty() {
-                        cfg.llm.ollama_model = "granite4.2:3b".to_string();
+                    if cfg.llm.enforce_fixed_models() {
                         let _ = cfg.save();
                     }
                     return cfg;

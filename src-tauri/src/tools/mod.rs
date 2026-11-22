@@ -56,6 +56,11 @@ pub fn coerce_to_f64(val: &serde_json::Value) -> Option<f64> {
     }
 }
 
+/// A trimmed, non-empty string parameter.
+pub fn str_param<'a>(params: &'a HashMap<String, serde_json::Value>, key: &str) -> Option<&'a str> {
+    params.get(key).and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty())
+}
+
 pub type ToolFuture<'a> = Pin<Box<dyn Future<Output = Result<String, String>> + Send + 'a>>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, Deserialize)]
@@ -82,6 +87,15 @@ pub trait DesktopTool: Send + Sync {
     }
     fn requires_confirmation(&self) -> bool {
         self.risk_level() == ToolRiskLevel::Destructive
+    }
+    /// Spoken question asked before running a tool that needs confirmation.
+    fn confirmation_prompt(&self, _params: &HashMap<String, serde_json::Value>) -> String {
+        format!("Should I go ahead with {}?", self.name().replace('_', " "))
+    }
+    /// When true, the tool output is raw data: the model turns it into a spoken
+    /// answer to the user's actual question instead of reading it verbatim.
+    fn answer_from_result(&self) -> bool {
+        false
     }
     fn execute<'a>(
         &self,

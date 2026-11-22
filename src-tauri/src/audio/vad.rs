@@ -66,12 +66,4 @@ impl AdaptiveVad {
 
         false
     }
-
-    pub fn reset(&mut self) {
-        self.samples_collected = 0;
-        self.rms_sum = 0.0;
-        self.count = 0;
-        self.threshold = 0.015;
-        self.silence_counter.store(0, Ordering::SeqCst);
-    }
 }

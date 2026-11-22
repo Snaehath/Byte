@@ -19,10 +19,6 @@ impl Default for SpeechService {
 }
 
 impl SpeechService {
-    pub fn new(stt: Box<dyn SpeechToText>, tts: Box<dyn TextToSpeech>) -> Self {
-        Self { stt, tts }
-    }
-
     /// Transcribe a recorded WAV file into text
     pub fn transcribe(&self, wav_path: &Path) -> Result<String, String> {
         self.stt.transcribe(wav_path)

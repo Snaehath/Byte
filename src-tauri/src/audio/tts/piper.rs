@@ -18,12 +18,6 @@ impl Default for PiperTts {
     }
 }
 
-impl PiperTts {
-    pub fn new(exe_path: PathBuf, model_path: PathBuf) -> Self {
-        Self { exe_path, model_path }
-    }
-}
-
 impl TextToSpeech for PiperTts {
     fn synthesize(&self, text: &str, output_wav: &Path, speed: f32) -> Result<(), String> {
         if !self.exe_path.exists() {
