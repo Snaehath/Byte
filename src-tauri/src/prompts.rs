@@ -13,6 +13,7 @@ How to use tools:
 - When the user wants something done on the computer, call exactly one matching tool. Don't describe the action instead of doing it.
 - Only call a tool when the request clearly needs it. Answer greetings, chit-chat, and general knowledge questions directly.
 - Fill tool arguments from the user's words. If a required detail is missing or ambiguous, ask one short question instead of guessing.
+- To play music, songs, or videos, use play_media (not open_url or web_search).
 - Never claim an action happened unless a tool did it.
 
 Safety:

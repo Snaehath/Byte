@@ -358,12 +358,13 @@ async fn run_tool(
     transcription: &str,
     confirmed: bool,
 ) -> Result<String, String> {
+    let limit = registry.get_tool(&call.tool).map_or(TOOL_TIMEOUT_SECS, |t| t.timeout_secs());
     match tokio::time::timeout(
-        std::time::Duration::from_secs(TOOL_TIMEOUT_SECS),
+        std::time::Duration::from_secs(limit),
         registry.execute_tool(call, window, &state.http_client, transcription, state, confirmed),
     ).await {
         Ok(result) => result,
-        Err(_) => Err(ByteError::Timeout { stage: call.tool.replace('_', " "), duration_ms: TOOL_TIMEOUT_SECS * 1000 }.to_user_friendly_message()),
+        Err(_) => Err(ByteError::Timeout { stage: call.tool.replace('_', " "), duration_ms: limit * 1000 }.to_user_friendly_message()),
     }
 }
 
@@ -524,6 +525,11 @@ async fn respond(
 
     if tool.requires_confirmation() {
         let question = tool.confirmation_prompt(&call.parameters);
+        if call.tool == "analyze_screen" {
+            // Load the vision model while the user answers the question.
+            let config = crate::config::AppConfig::load();
+            crate::ai::VisionService::warm_up(state.http_client.clone(), config.llm.ollama_url, config.llm.vision_model);
+        }
         *state.pending_tool_call.lock().unwrap() = Some((call, std::time::Instant::now()));
         return Ok(Some((question, None)));
     }

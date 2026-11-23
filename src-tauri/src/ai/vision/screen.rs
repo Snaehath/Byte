@@ -50,6 +50,25 @@ impl VisionService {
         Ok(format!("data:image/jpeg;base64,{}", base64::engine::general_purpose::STANDARD.encode(&jpeg)))
     }
 
+    /// Start loading the vision model into memory so the real request is fast.
+    /// Fire-and-forget: errors are only logged.
+    pub fn warm_up(client: reqwest::Client, chat_endpoint: String, model: String) {
+        tauri::async_runtime::spawn(async move {
+            let root = chat_endpoint.trim_end_matches('/').trim_end_matches("/v1/chat/completions").to_string();
+            let res = client
+                .post(format!("{root}/api/generate"))
+                .timeout(std::time::Duration::from_secs(110))
+                .json(&serde_json::json!({ "model": model, "keep_alive": "5m" }))
+                .send()
+                .await;
+            match res {
+                Ok(r) if r.status().is_success() => log::info!("Vision model {model} is loaded."),
+                Ok(r) => log::warn!("Vision warm-up returned {}", r.status()),
+                Err(e) => log::warn!("Vision warm-up failed: {e}"),
+            }
+        });
+    }
+
     /// Ask the local vision model about the current screen.
     pub async fn analyze_screen(
         client: &reqwest::Client,
@@ -78,7 +97,7 @@ impl VisionService {
 
         let res = client
             .post(endpoint_url)
-            .timeout(std::time::Duration::from_secs(60))
+            .timeout(std::time::Duration::from_secs(110))
             .json(&payload)
             .send()
             .await

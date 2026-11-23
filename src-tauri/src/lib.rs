@@ -76,7 +76,7 @@ pub fn run() {
             is_interacting: is_interacting_clone,
             wake_word_enabled: Arc::clone(&wake_word_enabled),
             http_client: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(90))
+                .timeout(std::time::Duration::from_secs(120))
                 .build()
                 .unwrap(),
             memory,

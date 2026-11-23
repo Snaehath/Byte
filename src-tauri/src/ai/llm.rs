@@ -34,7 +34,7 @@ pub async fn chat_completion(
 ) -> Result<LlmResult, String> {
     let req = client
         .post(endpoint_url)
-        .timeout(std::time::Duration::from_secs(45));
+        .timeout(std::time::Duration::from_secs(60));
 
     let mut body = serde_json::json!({
         "model": model,

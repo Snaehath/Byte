@@ -10,6 +10,9 @@ impl DesktopTool for AnalyzeScreenTool {
     }
     fn risk_level(&self) -> ToolRiskLevel { ToolRiskLevel::LowRisk }
     fn requires_confirmation(&self) -> bool { true }
+    /// Loading the vision model can mean Ollama first unloads the text model
+    /// (common on 4 GB GPUs), so allow far longer than ordinary tools.
+    fn timeout_secs(&self) -> u64 { 120 }
     fn confirmation_prompt(&self, _params: &HashMap<String, serde_json::Value>) -> String {
         "Should I take a look at your screen?".to_string()
     }

@@ -1,19 +1,20 @@
 /**
  * Byte Orb
  *
- * A perfectly round sphere filled with slowly flowing, domain-warped color —
+ * A perfectly round, still sphere filled with slowly churning liquid color —
  * rendered with a WebGL fragment shader (2D canvas fallback when WebGL is
  * unavailable). Each presence state blends to its own palette and motion,
  * and the sphere responds to live audio level.
  */
 
 const ORB_STATES = {
-  idle:      { colors: ['#1d3bff', '#62c6ff', '#e9f3ff'], speed: 0.16, swirl: 0.05, glow: 0.35, scale: 1.00 },
-  listening: { colors: ['#0a7cff', '#3fe0ff', '#f1fdff'], speed: 0.30, swirl: 0.10, glow: 0.55, scale: 1.03 },
-  thinking:  { colors: ['#5b21f6', '#b28dff', '#ffd6fb'], speed: 0.55, swirl: 0.45, glow: 0.50, scale: 0.97 },
-  speaking:  { colors: ['#1f4dff', '#3ad2ff', '#b8ffe6'], speed: 0.38, swirl: 0.12, glow: 0.60, scale: 1.02 },
-  cancelled: { colors: ['#3c4a63', '#8796ae', '#dfe6f0'], speed: 0.10, swirl: 0.02, glow: 0.18, scale: 0.96 },
-  error:     { colors: ['#b4232c', '#ff7a7a', '#ffe3e3'], speed: 0.14, swirl: 0.03, glow: 0.35, scale: 0.97 },
+  // speed: how fast the liquid flows; swirl: how strongly it churns.
+  idle:      { colors: ['#1d3bff', '#62c6ff', '#e9f3ff'], speed: 0.14, swirl: 0.15, glow: 0.35, scale: 1.00 },
+  listening: { colors: ['#0a7cff', '#3fe0ff', '#f1fdff'], speed: 0.26, swirl: 0.35, glow: 0.55, scale: 1.03 },
+  thinking:  { colors: ['#5b21f6', '#b28dff', '#ffd6fb'], speed: 0.42, swirl: 0.85, glow: 0.50, scale: 0.97 },
+  speaking:  { colors: ['#1f4dff', '#3ad2ff', '#b8ffe6'], speed: 0.32, swirl: 0.45, glow: 0.60, scale: 1.02 },
+  cancelled: { colors: ['#3c4a63', '#8796ae', '#dfe6f0'], speed: 0.08, swirl: 0.10, glow: 0.18, scale: 0.96 },
+  error:     { colors: ['#b4232c', '#ff7a7a', '#ffe3e3'], speed: 0.12, swirl: 0.12, glow: 0.35, scale: 0.97 },
 };
 
 const VERT = `
@@ -61,8 +62,6 @@ float fbm(vec2 p) {
   return v;
 }
 
-mat2 rot(float a) { float c = cos(a), s = sin(a); return mat2(c, -s, s, c); }
-
 void main() {
   float px = 2.0 / min(uRes.x, uRes.y);
   vec2 p = (gl_FragCoord.xy - 0.5 * uRes) * px;   // -1..1 square space
@@ -87,13 +86,21 @@ void main() {
 
   // Slight lens distortion so the fluid feels like it lives on a sphere
   vec2 uv = q * (1.0 - 0.28 * (1.0 - z));
-  uv = rot(uPhase * uSwirl) * uv;
-
   float t = uPhase;
-  vec2 w = vec2(fbm(uv * 1.4 + vec2(t * 0.35, -t * 0.22)),
-                fbm(uv * 1.4 + vec2(-t * 0.18, t * 0.30) + 4.7));
-  float n1 = fbm(uv * 1.15 + w * (1.6 + uLevel * 1.2) + vec2(0.0, t * 0.12));
-  float n2 = fbm(uv * 0.9 - w * 1.1 + vec2(t * 0.08, 2.3));
+
+  // Voice makes soft ripples travel outward through the liquid.
+  float rq = length(q);
+  uv += q * sin(rq * 9.0 - t * 14.0) * uLevel * 0.035;
+
+  // Two layers of flow drifting in different directions (no rotation):
+  // the second is warped by the first, so colors fold into each other.
+  vec2 w1 = vec2(fbm(uv * 1.2 + vec2(0.0, t * 0.30)),
+                 fbm(uv * 1.2 + vec2(5.2, -t * 0.24)));
+  vec2 w2 = vec2(fbm(uv * 1.7 + w1 * 1.6 + vec2(t * 0.18, 1.7)),
+                 fbm(uv * 1.7 + w1 * 1.6 + vec2(8.3, -t * 0.14)));
+  float churn = 1.2 + uSwirl * 2.2 + uLevel * 1.6;
+  float n1 = fbm(uv * 1.05 + w2 * churn);
+  float n2 = fbm(uv * 0.85 - w1 * (1.0 + uSwirl) + vec2(-t * 0.06, 3.0 + t * 0.05));
 
   vec3 col = mix(uC1, uC2, smoothstep(0.28, 0.72, n1));
   col = mix(col, uC3, smoothstep(0.52, 0.86, n2) * 0.85);
@@ -283,9 +290,9 @@ class ByteLivingOrb {
     ctx.fillRect(cx - R, cy - R, R * 2, R * 2);
     const blobs = [[c.c[1], 0.9, 0], [c.c[2], 0.6, 2.1], [c.c[1], 0.7, 4.2]];
     for (const [col, size, off] of blobs) {
-      const a = this.phase * (0.8 + c.swirl) + off;
-      const bx = cx + Math.cos(a) * R * 0.45;
-      const by = cy + Math.sin(a * 1.3) * R * 0.45;
+      const a = this.phase * (0.6 + c.swirl) + off;
+      const bx = cx + Math.sin(a * 0.7 + off) * R * 0.32;
+      const by = cy + Math.sin(a * 1.1 + off * 1.7) * R * 0.32;
       const g = ctx.createRadialGradient(bx, by, 0, bx, by, R * size);
       g.addColorStop(0, rgb(col, 0.85));
       g.addColorStop(1, rgb(col, 0));

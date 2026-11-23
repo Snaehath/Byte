@@ -7,6 +7,7 @@ pub mod clipboard;
 pub mod utility;
 pub mod memory;
 pub mod vision;
+pub mod media;
 
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -97,6 +98,10 @@ pub trait DesktopTool: Send + Sync {
     fn answer_from_result(&self) -> bool {
         false
     }
+    /// Maximum time this tool may run.
+    fn timeout_secs(&self) -> u64 {
+        crate::core::TOOL_TIMEOUT_SECS
+    }
     fn execute<'a>(
         &self,
         params: &'a HashMap<String, serde_json::Value>,
@@ -127,6 +132,7 @@ impl ToolRegistry {
         tools.insert("show_notification", Box::new(utility::ShowNotificationTool));
         tools.insert("update_memory", Box::new(memory::UpdateMemoryTool));
         tools.insert("analyze_screen", Box::new(vision::AnalyzeScreenTool));
+        tools.insert("play_media", Box::new(media::PlayMediaTool));
         Self { tools }
     }
 
