@@ -72,6 +72,7 @@ void main() {
 
   // Outer halo (premultiplied, additive)
   float halo = exp(-max(r - R, 0.0) * 9.0) * smoothstep(R - 0.02, R + 0.01, r);
+  halo *= 1.0 - smoothstep(0.86, 0.99, r);   // fade to zero before the canvas edge (no square outline)
   vec3 haloCol = mix(uC1, uC2, 0.6) * halo * (uGlow + uLevel * 0.6) * 0.55;
   float haloA = halo * (uGlow + uLevel * 0.6) * 0.45;
 
