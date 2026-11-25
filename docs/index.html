@@ -116,7 +116,12 @@
     }
     /* The orb: same shader as the app. The canvas includes room for its glow. */
     .orb { position: relative; flex: none; }
-    .orb canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+    .orb canvas {
+      position: absolute; inset: 0; width: 100%; height: 100%;
+      /* Clip to a soft circle so the glow can never show the canvas's square edge. */
+      -webkit-mask-image: radial-gradient(closest-side, #000 72%, transparent 100%);
+      mask-image: radial-gradient(closest-side, #000 72%, transparent 100%);
+    }
     .orb-fallback {
       display: none; position: absolute; inset: 15%; border-radius: 50%;
       background: radial-gradient(circle at 35% 30%, #f4f0ff, #4fd8ff 34%, #6d5cff 80%);
@@ -449,7 +454,7 @@
               <div class="bar"><span></span></div>
               <div class="meta">Now playing</div>
             </div>
-            <div class="toast" id="w-toast"><span class="app-icon" aria-hidden="true"></span><div><strong>Byte</strong><span>Timer set · 20 minutes · stretch</span></div></div>
+            <div class="toast" id="w-toast"><span class="app-icon" aria-hidden="true"></span><div><strong>Byte reminder</strong><span>stretch · 20 minutes later</span></div></div>
             <div class="vol" id="w-vol"><svg aria-hidden="true"><use href="#i-vol"/></svg><div class="track"><span></span></div>52</div>
             <div class="presence">
               <div class="orb orb-mini" id="mini-orb" aria-hidden="true"><canvas></canvas><span class="orb-fallback"></span></div>
@@ -824,7 +829,8 @@ en_US-lessac-high.onnx.json</code></pre><button class="copy" type="button" aria-
       var SCENES = [
         { label: 'Play music', say: 'Play some lofi on YouTube', reply: 'Playing lofi hip hop on YouTube.', act: function () { wBrowser.classList.add('show'); tbBrowser.classList.add('open'); } },
         { label: 'Minimize a window', say: 'Minimize this window', reply: 'Minimized notes.md — Editor.', act: function () { wEditor.classList.add('min'); tbEditor.classList.remove('open'); } },
-        { label: 'Set a timer', say: 'Remind me to stretch in 20 minutes', reply: 'Timer set for 20 minutes.', act: function () { wToast.classList.add('show'); desk.classList.add('has-panel'); } },
+        // The reminder notification appears when the timer is due, not when it's set.
+        { label: 'Set a timer', say: 'Remind me to stretch in 20 minutes', reply: 'Timer set for 20 minutes.', act: function (after) { after(function () { bubble.classList.remove('show'); wToast.classList.add('show'); desk.classList.add('has-panel'); }, 1700); } },
         { label: 'Turn it down', say: 'Turn the volume down', reply: 'Volume down.', act: function () { wVol.classList.add('show'); desk.classList.add('has-panel'); } }
       ];
       var scenesEl = $('scenes'), timers = [], current = -1, auto = !reduce, sceneMs = 6200;
@@ -852,7 +858,7 @@ en_US-lessac-high.onnx.json</code></pre><button class="copy" type="button" aria-
         miniOrb.set('listening');
         later(function () { bWho.textContent = 'You'; bText.textContent = s.say; bubble.classList.add('show'); }, 250);
         later(function () { bubble.classList.remove('show'); miniOrb.set('thinking'); }, 2100);
-        later(function () { s.act(); bWho.textContent = 'Byte'; bText.textContent = s.reply; bubble.classList.add('show'); miniOrb.set('speaking'); }, 2600);
+        later(function () { s.act(later); bWho.textContent = 'Byte'; bText.textContent = s.reply; bubble.classList.add('show'); miniOrb.set('speaking'); }, 2600);
         later(function () { miniOrb.set('idle'); }, 4400);
         if (auto) later(function () { play((current + 1) % SCENES.length); }, sceneMs);
       }

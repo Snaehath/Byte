@@ -112,6 +112,9 @@ svg {
   width: 172px;
   height: 172px;
   display: block;
+  /* Clip the glow to a soft circle so the canvas edge never shows. */
+  -webkit-mask-image: radial-gradient(closest-side, #000 74%, transparent 100%);
+  mask-image: radial-gradient(closest-side, #000 74%, transparent 100%);
 }
 
 .status-pill {
