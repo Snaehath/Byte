@@ -2,7 +2,9 @@ use serde::{Deserialize, Serialize};
 use tauri::{PhysicalPosition, Position, WebviewWindow};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum Anchor {
+    #[default]
     BottomRight,
     BottomLeft,
     TopRight,
@@ -11,11 +13,6 @@ pub enum Anchor {
     Center,
 }
 
-impl Default for Anchor {
-    fn default() -> Self {
-        Self::BottomRight
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct MonitorGeometry {

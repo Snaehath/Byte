@@ -3,8 +3,10 @@ use serde::{Deserialize, Serialize};
 /// Visual presence states for the Byte desktop shell
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum PresenceState {
     Hidden,
+    #[default]
     Idle,
     Listening,
     Thinking,
@@ -12,11 +14,6 @@ pub enum PresenceState {
     Cancelled,
 }
 
-impl Default for PresenceState {
-    fn default() -> Self {
-        Self::Idle
-    }
-}
 
 impl PresenceState {
     pub fn as_str(&self) -> &'static str {

@@ -128,12 +128,12 @@ impl BytePaths {
         if !configured.trim().is_empty() {
             return PathBuf::from(configured);
         }
-        let in_models = Self::models_dir().join("en_US-lessac-medium.onnx");
+        let in_models = Self::models_dir().join("en_US-lessac-high.onnx");
         if in_models.exists() {
             return in_models;
         }
         // Dev fallback for user's existing machine
-        let dev_path = PathBuf::from(r"D:\piper\en_US-lessac-medium.onnx");
+        let dev_path = PathBuf::from(r"D:\piper\en_US-lessac-high.onnx");
         if dev_path.exists() {
             return dev_path;
         }

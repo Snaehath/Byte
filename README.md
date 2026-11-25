@@ -1,6 +1,8 @@
-![Byte app icon](src-tauri/icons/128x128.png)
+<p align="center">
+  <img src="src-tauri/icons/128x128.png" alt="Byte app icon" width="128" height="128" />
+</p>
 
-# Byte
+<h1 align="center">Byte</h1>
 
 Byte is a hands-free AI assistant for Windows, built with **Rust, Tauri, HTML, CSS, and JavaScript**. Talk to Byte with the wake word, click the orb, or press **Ctrl+B**. The floating orb shows when Byte is listening, thinking, or speaking; its controls appear when you move the pointer over it.
 
@@ -27,7 +29,11 @@ ollama pull granite4.2:3b
 ollama pull minicpm-v4.6:latest
 ```
 
-Models can't be changed in this version. Open Settings from the icon shown when you hover over the orb to set the Ollama endpoint, check that both models are installed (or download a missing one), toggle the wake word, and clear Byte's memory.
+The local models can't be changed in this version.
+
+### Cloud models (optional)
+
+In Settings, switch **Models** to **Cloud** and paste an OpenAI API key to use a cloud model instead. One model (default `gpt-4.1-mini`) handles conversation, tool calling, and screen analysis. The key is stored in Windows Credential Manager, never in the config file. To use another OpenAI-compatible provider, set `llm.cloud_url` in `%APPDATA%\Byte\config\config.json`. In cloud mode your messages, and screenshots when you ask Byte to look at your screen, are sent to the provider; speech recognition and the voice still run locally. Open Settings from the icon shown when you hover over the orb to set the Ollama endpoint, check that both models are installed (or download a missing one), toggle the wake word, and clear Byte's memory.
 
 ## Desktop capabilities
 

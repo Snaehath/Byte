@@ -65,23 +65,31 @@ impl HealthChecker {
             details: format!("{}", piper_model_path.display()),
         };
 
-        // 4. Local Ollama service
+        // 4. Model provider
         let config = AppConfig::load();
-        let service_root = config.llm.ollama_url.trim().trim_end_matches("/v1/chat/completions").trim_end_matches('/').to_string();
-        let provider_ok = client
-            .get(&service_root)
-            .timeout(std::time::Duration::from_millis(2500))
-            .send()
-            .await
-            .map(|res| res.status().is_success())
-            .unwrap_or(false);
-        let provider_details = if provider_ok {
-            format!(
-                "Ollama available at {} (text: {}, vision: {})",
-                service_root, config.llm.ollama_model, config.llm.vision_model
-            )
+        let (provider_ok, provider_details) = if config.llm.is_cloud() {
+            let has_key = crate::ai::credentials::saved_cloud_api_key().is_some();
+            let details = if has_key {
+                format!("Cloud model {} at {}", config.llm.cloud_model, config.llm.cloud_url)
+            } else {
+                "Cloud mode is selected but no API key is saved.".to_string()
+            };
+            (has_key, details)
         } else {
-            format!("Ollama is not responding at {}. Make sure Ollama is running.", service_root)
+            let service_root = config.llm.ollama_url.trim().trim_end_matches("/v1/chat/completions").trim_end_matches('/').to_string();
+            let ok = client
+                .get(&service_root)
+                .timeout(std::time::Duration::from_millis(2500))
+                .send()
+                .await
+                .map(|res| res.status().is_success())
+                .unwrap_or(false);
+            let details = if ok {
+                format!("Ollama at {} (text: {}, vision: {})", service_root, config.llm.ollama_model, config.llm.vision_model)
+            } else {
+                format!("Ollama is not responding at {}. Make sure Ollama is running.", service_root)
+            };
+            (ok, details)
         };
 
         let ollama_service = ComponentHealth {

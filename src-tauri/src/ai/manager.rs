@@ -1,7 +1,48 @@
 use crate::ai::llm::{self, ChatMessage, LlmResult};
 use crate::config::AppConfig;
 
-/// Sends conversation and tool-calling requests to the fixed local text model.
+/// Where a model request goes: the local Ollama server or a cloud API.
+#[derive(Clone)]
+pub struct ModelTarget {
+    pub url: String,
+    pub model: String,
+    /// Present only for cloud requests.
+    pub api_key: Option<String>,
+}
+
+impl ModelTarget {
+    pub fn is_cloud(&self) -> bool {
+        self.api_key.is_some()
+    }
+
+    fn cloud(config: &AppConfig) -> Result<Self, String> {
+        let api_key = crate::ai::credentials::saved_cloud_api_key()
+            .ok_or_else(|| "Add your API key in Byte's settings to use the cloud model.".to_string())?;
+        Ok(Self {
+            url: config.llm.cloud_url.trim().to_string(),
+            model: config.llm.cloud_model.trim().to_string(),
+            api_key: Some(api_key),
+        })
+    }
+
+    /// Model used for conversation and tool calling.
+    pub fn text(config: &AppConfig) -> Result<Self, String> {
+        if config.llm.is_cloud() {
+            return Self::cloud(config);
+        }
+        Ok(Self { url: config.llm.ollama_url.clone(), model: config.llm.ollama_model.clone(), api_key: None })
+    }
+
+    /// Model used for screen analysis. In cloud mode the same model handles images.
+    pub fn vision(config: &AppConfig) -> Result<Self, String> {
+        if config.llm.is_cloud() {
+            return Self::cloud(config);
+        }
+        Ok(Self { url: config.llm.ollama_url.clone(), model: config.llm.vision_model.clone(), api_key: None })
+    }
+}
+
+/// Sends conversation and tool-calling requests to the selected text model.
 pub struct ModelManager {
     config: AppConfig,
 }
@@ -13,24 +54,23 @@ impl Default for ModelManager {
 }
 
 impl ModelManager {
+    pub fn is_cloud(&self) -> bool {
+        self.config.llm.is_cloud()
+    }
+
     pub async fn chat(
         &self,
         client: &reqwest::Client,
         messages: &[ChatMessage],
         tools: Option<&[serde_json::Value]>,
     ) -> Result<LlmResult, String> {
+        let target = ModelTarget::text(&self.config)?;
         let llm_cfg = &self.config.llm;
-        log::info!("ModelManager: querying {} at {}", llm_cfg.ollama_model, llm_cfg.ollama_url);
-        llm::chat_completion(
-            client,
-            &llm_cfg.ollama_url,
-            &llm_cfg.ollama_model,
-            messages,
-            tools,
-            llm_cfg.temperature,
-            llm_cfg.max_tokens,
-            &llm_cfg.reasoning_effort,
-        )
-        .await
+        log::info!(
+            "ModelManager: querying {} ({})",
+            target.model,
+            if target.is_cloud() { "cloud" } else { "local" }
+        );
+        llm::chat_completion(client, &target, messages, tools, llm_cfg.temperature, llm_cfg.max_tokens, &llm_cfg.reasoning_effort).await
     }
 }

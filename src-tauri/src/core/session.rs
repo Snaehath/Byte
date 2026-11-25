@@ -16,7 +16,11 @@ impl ConversationSession {
     const IDLE_RESET: Duration = Duration::from_secs(180);
 
     pub fn history(&mut self) -> Vec<ChatMessage> {
-        if self.last_turn.is_some_and(|t| t.elapsed() > Self::IDLE_RESET) {
+        self.history_at(Instant::now())
+    }
+
+    fn history_at(&mut self, now: Instant) -> Vec<ChatMessage> {
+        if self.last_turn.is_some_and(|t| now.saturating_duration_since(t) > Self::IDLE_RESET) {
             self.clear();
         }
         self.messages.clone()
@@ -56,7 +60,8 @@ mod tests {
     fn test_session_resets_after_idle() {
         let mut session = ConversationSession::default();
         session.record("q", "a");
-        session.last_turn = Some(Instant::now() - Duration::from_secs(600));
-        assert!(session.history().is_empty());
+        let later = Instant::now() + ConversationSession::IDLE_RESET + Duration::from_secs(1);
+        assert_eq!(session.history().len(), 2);
+        assert!(session.history_at(later).is_empty());
     }
 }

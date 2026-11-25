@@ -116,6 +116,12 @@ pub struct ToolRegistry {
     pub tools: HashMap<&'static str, Box<dyn DesktopTool>>,
 }
 
+impl Default for ToolRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ToolRegistry {
     pub fn new() -> Self {
         let mut tools: HashMap<&'static str, Box<dyn DesktopTool>> = HashMap::new();
@@ -155,8 +161,8 @@ impl ToolRegistry {
         tools
     }
 
-    pub fn get_tool(&self, name: &str) -> Option<&Box<dyn DesktopTool>> {
-        self.tools.get(name)
+    pub fn get_tool(&self, name: &str) -> Option<&dyn DesktopTool> {
+        self.tools.get(name).map(|tool| tool.as_ref())
     }
 
     pub fn validate_execution(&self, tool_name: &str, confirmed: bool) -> Result<(), String> {
@@ -273,8 +279,8 @@ mod tests {
         assert_eq!(coerce_to_u64(&json!([1, 2, 3])), None);
 
         // f64 coercion
-        assert_eq!(coerce_to_f64(&json!(3.14)), Some(3.14));
-        assert_eq!(coerce_to_f64(&json!("2.718")), Some(2.718));
+        assert_eq!(coerce_to_f64(&json!(1.25)), Some(1.25));
+        assert_eq!(coerce_to_f64(&json!("2.5")), Some(2.5));
         assert_eq!(coerce_to_f64(&json!("invalid")), None);
         assert_eq!(coerce_to_f64(&json!(null)), None);
     }

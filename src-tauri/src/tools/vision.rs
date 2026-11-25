@@ -37,17 +37,13 @@ impl DesktopTool for AnalyzeScreenTool {
         _state: &'a tauri::State<'_, crate::AppState>,
     ) -> ToolFuture<'a> {
         Box::pin(async move {
-            let config = crate::config::AppConfig::load();
+            let target = crate::ai::ModelTarget::vision(&crate::config::AppConfig::load())?;
             let query = str_param(params, "query")
                 .or_else(|| Some(transcription.trim()).filter(|t| !t.is_empty()))
                 .unwrap_or("Describe what is on my screen.");
-            crate::ai::VisionService::analyze_screen(
-                client,
-                &config.llm.ollama_url,
-                config.llm.vision_model.trim(),
-                query,
-            )
-            .await
+            crate::ai::VisionService::analyze_screen(client, &target, query)
+                .await
+                .map_err(|e| if target.is_cloud() { crate::core::cloud_error_message(&e) } else { e })
         })
     }
 }

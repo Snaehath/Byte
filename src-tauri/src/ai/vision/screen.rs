@@ -69,11 +69,10 @@ impl VisionService {
         });
     }
 
-    /// Ask the local vision model about the current screen.
+    /// Ask the selected vision model (local or cloud) about the current screen.
     pub async fn analyze_screen(
         client: &reqwest::Client,
-        endpoint_url: &str,
-        model: &str,
+        target: &crate::ai::ModelTarget,
         query: &str,
     ) -> Result<String, String> {
         let image_url = tokio::task::spawn_blocking(Self::capture_screen_data_url)
@@ -81,8 +80,7 @@ impl VisionService {
             .map_err(|e| format!("Screen capture task failed: {e}"))??;
 
         let payload = serde_json::json!({
-            "model": model,
-            "temperature": 0.2,
+            "model": target.model,
             "messages": [
                 { "role": "system", "content": VISION_INSTRUCTIONS },
                 {
@@ -94,21 +92,7 @@ impl VisionService {
                 }
             ]
         });
-
-        let res = client
-            .post(endpoint_url)
-            .timeout(std::time::Duration::from_secs(110))
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|e| format!("Vision request failed: {e}"))?;
-
-        if !res.status().is_success() {
-            let status = res.status();
-            let text = res.text().await.unwrap_or_default();
-            return Err(format!("Vision model error (status {status}): {text}"));
-        }
-        let val: serde_json::Value = res.json().await.map_err(|e| format!("Invalid vision response: {e}"))?;
+        let val = crate::ai::llm::post_chat(client, target, payload, 0.2, 110).await?;
         val.pointer("/choices/0/message/content")
             .and_then(|c| c.as_str())
             .map(|c| c.trim().to_string())

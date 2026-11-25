@@ -8,6 +8,12 @@ pub struct AdaptiveVad {
     silence_counter: AtomicUsize,
 }
 
+impl Default for AdaptiveVad {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AdaptiveVad {
     pub fn new() -> Self {
         Self {

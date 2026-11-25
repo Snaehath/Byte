@@ -6,6 +6,8 @@ use tauri::Manager;
 pub struct Command;
 
 impl Command {
+    /// Drop-in for `std::process::Command::new` that never flashes a console window.
+    #[allow(clippy::new_ret_no_self)]
     pub fn new<S: AsRef<std::ffi::OsStr>>(program: S) -> StdCommand {
         let mut cmd = StdCommand::new(program);
         #[cfg(windows)]
@@ -94,10 +96,13 @@ pub fn run() {
             commands::get_model_settings,
             commands::save_model_settings,
             commands::get_model_status,
+            commands::check_cloud_connection,
+            commands::remove_cloud_api_key,
             commands::pull_ollama_model,
             commands::reset_saved_memory,
             commands::get_wake_word_enabled,
-            commands::set_wake_word_enabled
+            commands::set_wake_word_enabled,
+            commands::open_log_folder
         ])
         // Closing the window (e.g. Alt+F4) keeps Byte running in the tray.
         .on_window_event(|window, event| {
@@ -107,10 +112,24 @@ pub fn run() {
             }
         })
         .setup(move |app| {
-            if cfg!(debug_assertions) {
+            // Log to %LOCALAPPDATA%\com.byte.desktop\logs\byte.log in all builds
+            // (and to the console in debug). Tray > "Open log folder" opens it.
+            {
+                use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
+                let mut targets = vec![Target::new(TargetKind::LogDir { file_name: Some("byte".into()) })];
+                if cfg!(debug_assertions) {
+                    targets.push(Target::new(TargetKind::Stdout));
+                }
                 app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
+                    tauri_plugin_log::Builder::new()
+                        .clear_targets()
+                        .targets(targets)
                         .level(log::LevelFilter::Info)
+                        .level_for("reqwest", log::LevelFilter::Warn)
+                        .level_for("hyper", log::LevelFilter::Warn)
+                        .max_file_size(5_000_000)
+                        .rotation_strategy(RotationStrategy::KeepOne)
+                        .timezone_strategy(TimezoneStrategy::UseLocal)
                         .build(),
                 )?;
             }
@@ -172,20 +191,19 @@ pub fn run() {
                 use tauri::Manager;
                 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
                 let ctrl_b = Shortcut::new(Some(Modifiers::CONTROL), Code::KeyB);
-                let ctrl_b_clone = ctrl_b.clone();
+                let ctrl_b_clone = ctrl_b;
                 let app_handle = app.handle().clone();
                 app.handle().plugin(
                     tauri_plugin_global_shortcut::Builder::new()
                         .with_handler(move |_app, shortcut, event| {
-                            if event.state() == ShortcutState::Pressed {
-                                if shortcut == &ctrl_b_clone {
+                            if event.state() == ShortcutState::Pressed
+                                && shortcut == &ctrl_b_clone {
                                     log::info!("Global shortcut Ctrl+B pressed! Invoking presence toggle...");
                                     if let Some(window) = app_handle.get_webview_window("main") {
                                         let state = app_handle.state::<AppState>();
                                         let _ = state.presence.toggle(&window);
                                     }
                                 }
-                            }
                         })
                         .build()
                 )?;

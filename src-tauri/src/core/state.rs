@@ -116,7 +116,7 @@ pub fn resolve_conversation_intent(
     }
 
     // 5. Greeting (user greeted, or assistant responded to a greeting)
-    let is_greeting = crate::prompts::is_simple_greeting(&transcription)
+    let is_greeting = crate::prompts::is_simple_greeting(transcription)
         || resp_clean.starts_with("good morning")
         || resp_clean.starts_with("good afternoon")
         || resp_clean.starts_with("good evening")

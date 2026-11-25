@@ -61,9 +61,21 @@
       </header>
 
       <form class="settings-body" id="settings-form" novalidate>
-        <section class="group" aria-labelledby="g-models">
-          <h2 id="g-models">Models</h2>
-          <div class="card">
+        <section class="group" aria-labelledby="g-provider">
+          <h2 id="g-provider">Models</h2>
+          <div class="segmented" role="radiogroup" aria-labelledby="g-provider">
+            <button type="button" role="radio" data-provider="ollama" aria-checked="true">
+              <span class="seg-title">Local</span><span class="seg-desc">Private · Ollama</span>
+            </button>
+            <button type="button" role="radio" data-provider="cloud" aria-checked="false">
+              <span class="seg-title">Cloud</span><span class="seg-desc">Faster · API key</span>
+            </button>
+          </div>
+        </section>
+
+        <div id="local-settings">
+        <section class="group" aria-label="Local models">
+          <div class="card" id="local-models-card">
             <div class="row" id="row-text">
               <div class="row-main">
                 <span class="row-label">Conversation &amp; tools</span>
@@ -99,6 +111,41 @@
             </p>
           </div>
         </section>
+        </div>
+
+        <div id="cloud-settings" hidden>
+        <section class="group" aria-labelledby="g-cloud">
+          <h2 id="g-cloud">Cloud API</h2>
+          <div class="card card-pad stack">
+            <label class="field">
+              <span class="row-label">API key</span>
+              <span class="input-row">
+                <input id="cloud-api-key" type="password" autocomplete="new-password" spellcheck="false" placeholder="sk-…" />
+                <button class="btn btn-sm" id="remove-api-key" type="button" hidden>Remove</button>
+              </span>
+              <span class="row-desc" id="api-key-note">Stored securely in Windows Credential Manager.</span>
+            </label>
+            <label class="field">
+              <span class="row-label">Model</span>
+              <input class="text-input" id="cloud-model" type="text" list="cloud-model-options" autocomplete="off" spellcheck="false" placeholder="gpt-4.1-mini" />
+              <datalist id="cloud-model-options">
+                <option value="gpt-4.1-mini"></option>
+                <option value="gpt-4.1"></option>
+                <option value="gpt-4o-mini"></option>
+                <option value="gpt-4o"></option>
+              </datalist>
+              <span class="row-desc">One OpenAI model handles conversation, tools and screen analysis.</span>
+            </label>
+            <div class="input-row">
+              <p class="conn-status grow" id="cloud-status" data-state="unknown" role="status" aria-live="polite">
+                <span class="status-dot" aria-hidden="true"></span><span id="cloud-message">Not checked yet</span>
+              </p>
+              <button class="btn btn-sm" id="check-cloud" type="button">Check</button>
+            </div>
+          </div>
+          <p class="hint">Your messages, and screenshots when you ask Byte to look at your screen, are sent to the API provider. Speech recognition and voice still run on this device.</p>
+        </section>
+        </div>
 
         <section class="group" aria-labelledby="g-voice">
           <h2 id="g-voice">Voice</h2>
@@ -122,6 +169,19 @@
                 <span class="row-desc">Your name and preferences. Timers are kept.</span>
               </div>
               <button class="btn btn-sm btn-danger" id="reset-memory" type="button">Reset</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="group" aria-labelledby="g-help">
+          <h2 id="g-help">Troubleshooting</h2>
+          <div class="card">
+            <div class="row">
+              <div class="row-main">
+                <span class="row-label">Log file</span>
+                <span class="row-desc">Errors and timings, saved as byte.log</span>
+              </div>
+              <button class="btn btn-sm" id="open-logs" type="button">Open folder</button>
             </div>
           </div>
         </section>

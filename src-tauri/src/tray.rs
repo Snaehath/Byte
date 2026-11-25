@@ -18,6 +18,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "Show Byte", true, None::<&str>)?;
     let talk = MenuItem::with_id(app, "talk", "Talk to Byte (Ctrl+B)", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
+    let logs = MenuItem::with_id(app, "logs", "Open log folder", true, None::<&str>)?;
     let wake_word = CheckMenuItem::with_id(app, "wake_word", "Listen for wake word", true, wake_enabled, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Byte", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[
@@ -27,6 +28,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
         &PredefinedMenuItem::separator(app)?,
         &wake_word,
         &PredefinedMenuItem::separator(app)?,
+        &logs,
         &quit,
     ])?;
 
@@ -53,6 +55,11 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
                     log::error!("Tray: couldn't change wake word: {e}");
                 }
             }
+            "logs" => {
+                if let Err(e) = open_log_folder(app) {
+                    log::error!("Tray: {e}");
+                }
+            }
             "quit" => app.exit(0),
             _ => {}
         })
@@ -68,6 +75,13 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
 
     app.manage(TrayItems { wake_word });
     Ok(())
+}
+
+/// Open the folder containing byte.log in File Explorer.
+pub fn open_log_folder(app: &AppHandle) -> Result<(), String> {
+    let dir = app.path().app_log_dir().map_err(|e| format!("Couldn't find the log folder: {e}"))?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Couldn't create the log folder: {e}"))?;
+    crate::platform::windows::shell_open(&dir.to_string_lossy(), None)
 }
 
 /// Bring the orb back on screen without moving it.

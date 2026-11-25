@@ -26,10 +26,31 @@ pub struct ProcessResult {
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelSettings {
+    pub provider: String,
     pub ollama_url: String,
     pub text_model: String,
     pub vision_model: String,
+    pub cloud_url: String,
+    pub cloud_model: String,
+    pub api_key_configured: bool,
     pub setup_complete: bool,
+}
+
+/// What the settings form sends when saving.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelSettingsInput {
+    pub provider: String,
+    pub ollama_url: String,
+    pub cloud_url: String,
+    pub cloud_model: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloudStatus {
+    pub ok: bool,
+    pub message: String,
 }
 
 #[derive(Serialize)]
@@ -49,7 +70,7 @@ enum ConfirmationIntent {
 }
 
 fn confirmation_intent(transcription: &str) -> ConfirmationIntent {
-    let lower = transcription.to_lowercase().replace('\'', "").replace('’', "");
+    let lower = transcription.to_lowercase().replace(['\'', '’'], "");
     let normalized = lower
         .chars()
         .map(|ch| if ch.is_alphanumeric() { ch } else { ' ' })
@@ -144,25 +165,141 @@ pub fn set_conversation_window_size(
 pub fn get_model_settings() -> Result<ModelSettings, String> {
     let config = crate::config::AppConfig::load();
     Ok(ModelSettings {
+        provider: config.llm.provider,
         ollama_url: config.llm.ollama_url,
         text_model: config.llm.ollama_model,
         vision_model: config.llm.vision_model,
+        cloud_url: config.llm.cloud_url,
+        cloud_model: config.llm.cloud_model,
+        api_key_configured: crate::ai::credentials::saved_cloud_api_key().is_some(),
         setup_complete: config.llm.setup_complete,
     })
 }
 
+fn valid_endpoint(url: &str, https_only: bool) -> bool {
+    let scheme_ok = url.starts_with("https://") || (!https_only && url.starts_with("http://"));
+    scheme_ok && !url.chars().any(char::is_whitespace) && url.len() <= 2048
+}
+
+fn valid_model_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 120
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || "-_.:/".contains(c))
+}
+
+/// Accept a base URL (https://api.openai.com/v1) or the full chat completions URL.
+fn normalize_cloud_endpoint(url: &str) -> String {
+    let url = url.trim().trim_end_matches('/');
+    if url.ends_with("/chat/completions") {
+        url.to_string()
+    } else {
+        format!("{url}/chat/completions")
+    }
+}
+
 #[tauri::command]
-pub fn save_model_settings(ollama_url: String) -> Result<ModelSettings, String> {
-    let endpoint = ollama_url.trim();
-    let scheme_ok = endpoint.starts_with("http://") || endpoint.starts_with("https://");
-    if !scheme_ok || endpoint.chars().any(char::is_whitespace) || endpoint.len() > 2048 {
-        return Err("Enter a valid Ollama endpoint, such as http://localhost:11434.".to_string());
+pub fn save_model_settings(settings: ModelSettingsInput, api_key: String) -> Result<ModelSettings, String> {
+    let provider = settings.provider.trim();
+    if provider != "ollama" && provider != "cloud" {
+        return Err("Choose local or cloud models.".to_string());
     }
     let mut config = crate::config::AppConfig::load();
-    config.llm.ollama_url = normalize_ollama_endpoint(endpoint)?;
+
+    let ollama_url = settings.ollama_url.trim();
+    if !ollama_url.is_empty() {
+        if !valid_endpoint(ollama_url, false) {
+            return Err("Enter a valid Ollama endpoint, such as http://localhost:11434.".to_string());
+        }
+        config.llm.ollama_url = normalize_ollama_endpoint(ollama_url)?;
+    }
+
+    let cloud_url = settings.cloud_url.trim();
+    let cloud_model = settings.cloud_model.trim();
+    let api_key = api_key.trim();
+    if provider == "cloud" {
+        if !valid_endpoint(cloud_url, true) {
+            return Err("Enter a valid HTTPS API endpoint.".to_string());
+        }
+        if !valid_model_name(cloud_model) {
+            return Err("Enter a valid cloud model name, such as gpt-4.1-mini.".to_string());
+        }
+        if api_key.is_empty() && crate::ai::credentials::saved_cloud_api_key().is_none() {
+            return Err("Paste your API key to use cloud models.".to_string());
+        }
+    }
+    if api_key.len() > 2048 || api_key.chars().any(char::is_whitespace) {
+        return Err("That API key doesn't look right.".to_string());
+    }
+    if !api_key.is_empty() {
+        crate::ai::credentials::store_cloud_api_key(api_key)?;
+    }
+    if valid_endpoint(cloud_url, true) {
+        config.llm.cloud_url = normalize_cloud_endpoint(cloud_url);
+    }
+    if valid_model_name(cloud_model) {
+        config.llm.cloud_model = cloud_model.to_string();
+    }
+
+    config.llm.provider = provider.to_string();
     config.llm.setup_complete = true;
     config.save()?;
     get_model_settings()
+}
+
+#[tauri::command]
+pub fn remove_cloud_api_key() -> Result<ModelSettings, String> {
+    crate::ai::credentials::delete_cloud_api_key();
+    let mut config = crate::config::AppConfig::load();
+    if config.llm.is_cloud() {
+        config.llm.provider = "ollama".to_string();
+        config.save()?;
+    }
+    get_model_settings()
+}
+
+fn cloud_status(ok: bool, message: impl Into<String>) -> CloudStatus {
+    CloudStatus { ok, message: message.into() }
+}
+
+/// Verify the API key and model by fetching the model's details.
+/// Uses the typed key if given, otherwise the saved one.
+#[tauri::command]
+pub async fn check_cloud_connection(
+    state: State<'_, AppState>,
+    cloud_url: String,
+    cloud_model: String,
+    api_key: String,
+) -> Result<CloudStatus, String> {
+    let cloud_url = cloud_url.trim();
+    let model = cloud_model.trim();
+    if !valid_endpoint(cloud_url, true) {
+        return Ok(cloud_status(false, "Enter a valid HTTPS API endpoint."));
+    }
+    if !valid_model_name(model) {
+        return Ok(cloud_status(false, "Enter a valid model name."));
+    }
+    let typed = api_key.trim().to_string();
+    let key = if typed.is_empty() { crate::ai::credentials::saved_cloud_api_key() } else { Some(typed) };
+    let Some(key) = key else {
+        return Ok(cloud_status(false, "Paste your API key first."));
+    };
+    let base = normalize_cloud_endpoint(cloud_url).trim_end_matches("/chat/completions").to_string();
+    let res = state.http_client
+        .get(format!("{base}/models/{model}"))
+        .bearer_auth(key)
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await;
+    let Ok(res) = res else {
+        return Ok(cloud_status(false, "Couldn't reach the API. Check your internet connection."));
+    };
+    Ok(match res.status().as_u16() {
+        200..=299 => cloud_status(true, format!("Connected. {model} will handle text, tools and vision.")),
+        401 | 403 => cloud_status(false, "The API key was rejected."),
+        404 => cloud_status(false, format!("{model} isn't available on this account.")),
+        429 => cloud_status(false, "Rate limited or out of credit."),
+        code => cloud_status(false, format!("The API returned an error ({code}).")),
+    })
 }
 
 /// Accept either the Ollama root or the OpenAI-compatible chat URL and store the chat URL.
@@ -280,6 +417,12 @@ pub fn set_wake_word_enabled(app: tauri::AppHandle, enabled: bool) -> Result<boo
     Ok(enabled)
 }
 
+/// Open the folder that holds byte.log.
+#[tauri::command]
+pub fn open_log_folder(app: tauri::AppHandle) -> Result<(), String> {
+    crate::tray::open_log_folder(&app)
+}
+
 /// Pending confirmations expire so a stray "yes" much later can't trigger them.
 const CONFIRMATION_WINDOW: std::time::Duration = std::time::Duration::from_secs(90);
 
@@ -336,10 +479,12 @@ async fn ask_model(
     tools: Option<&[serde_json::Value]>,
 ) -> Result<Option<LlmResult>, ByteError> {
     let manager = ModelManager::default();
+    let cloud = manager.is_cloud();
     tokio::select! {
         res = tokio::time::timeout(std::time::Duration::from_secs(LLM_TIMEOUT_SECS), manager.chat(client, messages, tools)) => {
             match res {
                 Ok(Ok(result)) => Ok(Some(result)),
+                Ok(Err(msg)) if cloud => Err(ByteError::CloudError(msg)),
                 Ok(Err(msg)) if msg.contains("Network request failed") => Err(ByteError::ModelUnreachable(msg)),
                 Ok(Err(msg)) => Err(ByteError::ModelError(msg)),
                 Err(_) => Err(ByteError::Timeout { stage: "AI generation".to_string(), duration_ms: LLM_TIMEOUT_SECS * 1000 }),
@@ -525,9 +670,9 @@ async fn respond(
 
     if tool.requires_confirmation() {
         let question = tool.confirmation_prompt(&call.parameters);
-        if call.tool == "analyze_screen" {
-            // Load the vision model while the user answers the question.
-            let config = crate::config::AppConfig::load();
+        let config = crate::config::AppConfig::load();
+        if call.tool == "analyze_screen" && !config.llm.is_cloud() {
+            // Load the local vision model while the user answers the question.
             crate::ai::VisionService::warm_up(state.http_client.clone(), config.llm.ollama_url, config.llm.vision_model);
         }
         *state.pending_tool_call.lock().unwrap() = Some((call, std::time::Instant::now()));

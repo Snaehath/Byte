@@ -42,6 +42,16 @@ const connStatus = $('conn-status');
 const connMessage = $('conn-message');
 const wakeToggle = $('wake-toggle');
 const resetMemoryBtn = $('reset-memory');
+const providerButtons = [...document.querySelectorAll('[data-provider]')];
+const localSettings = $('local-settings');
+const cloudSettings = $('cloud-settings');
+const cloudKeyInput = $('cloud-api-key');
+const cloudModelInput = $('cloud-model');
+const apiKeyNote = $('api-key-note');
+const removeApiKeyBtn = $('remove-api-key');
+const checkCloudBtn = $('check-cloud');
+const cloudStatus = $('cloud-status');
+const cloudMessage = $('cloud-message');
 
 const modelRows = {
   text: { row: $('row-text'), name: $('text-model-name'), model: '' },
@@ -258,6 +268,91 @@ function renderWakeToggle(enabled) {
   wakeToggle.title = enabled ? 'Wake word is on' : 'Wake word is off';
 }
 
+let provider = 'ollama';
+let apiKeyConfigured = false;
+// The API endpoint isn't shown in Settings; it is kept from config.json.
+let cloudUrl = 'https://api.openai.com/v1';
+
+function cloudBase(url) {
+  return String(url || '').replace(/\/chat\/completions\/?$/, '').replace(/\/+$/, '');
+}
+
+function setProvider(next) {
+  provider = next === 'cloud' ? 'cloud' : 'ollama';
+  for (const btn of providerButtons) {
+    btn.setAttribute('aria-checked', String(btn.dataset.provider === provider));
+  }
+  localSettings.hidden = provider !== 'ollama';
+  cloudSettings.hidden = provider !== 'cloud';
+  settingsSubtitle.textContent = !setupComplete
+    ? 'Choose how Byte thinks: on this device, or with your cloud API key.'
+    : provider === 'cloud'
+      ? 'Using your cloud API. Voice still runs on this device.'
+      : 'Byte runs fully on this device.';
+}
+
+function renderApiKeyState() {
+  cloudKeyInput.value = '';
+  cloudKeyInput.placeholder = apiKeyConfigured ? 'Saved key · paste a new one to replace' : 'sk-…';
+  apiKeyNote.textContent = apiKeyConfigured
+    ? 'A key is saved in Windows Credential Manager.'
+    : 'Stored securely in Windows Credential Manager.';
+  removeApiKeyBtn.hidden = !apiKeyConfigured;
+}
+
+function setCloudState(state, message) {
+  cloudStatus.dataset.state = state;
+  cloudMessage.textContent = message;
+}
+
+async function checkCloud() {
+  checkCloudBtn.disabled = true;
+  setCloudState('busy', 'Checking…');
+  try {
+    const status = await invoke('check_cloud_connection', {
+      cloudUrl,
+      cloudModel: cloudModelInput.value.trim(),
+      apiKey: cloudKeyInput.value.trim(),
+    });
+    setCloudState(status.ok ? 'ok' : 'bad', status.message);
+  } catch (err) {
+    setCloudState('bad', String(err));
+  } finally {
+    checkCloudBtn.disabled = false;
+  }
+}
+
+for (const btn of providerButtons) {
+  btn.addEventListener('click', () => {
+    setProvider(btn.dataset.provider);
+    if (provider === 'cloud' && !apiKeyConfigured) cloudKeyInput.focus();
+  });
+}
+checkCloudBtn.addEventListener('click', checkCloud);
+removeApiKeyBtn.addEventListener('click', async () => {
+  removeApiKeyBtn.disabled = true;
+  try {
+    const settings = await invoke('remove_cloud_api_key');
+    apiKeyConfigured = settings.apiKeyConfigured;
+    renderApiKeyState();
+    setCloudState('unknown', 'Not checked yet');
+    setProvider(settings.provider);
+    setFeedback(settings.provider === 'ollama' ? 'API key removed. Switched to local models.' : 'API key removed.', 'ok');
+  } catch (err) {
+    setFeedback(String(err), 'error');
+  } finally {
+    removeApiKeyBtn.disabled = false;
+  }
+});
+for (const input of [cloudKeyInput, cloudModelInput]) {
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      settingsForm.requestSubmit();
+    }
+  });
+}
+
 async function loadSettings() {
   const settings = await invoke('get_model_settings');
   setupComplete = settings.setupComplete;
@@ -266,11 +361,14 @@ async function loadSettings() {
   modelRows.text.name.textContent = settings.textModel;
   modelRows.vision.name.textContent = settings.visionModel;
   ollamaUrlInput.value = displayEndpoint(settings.ollamaUrl);
+  cloudModelInput.value = settings.cloudModel;
+  cloudUrl = cloudBase(settings.cloudUrl) || cloudUrl;
+  apiKeyConfigured = settings.apiKeyConfigured;
+  renderApiKeyState();
+  setCloudState('unknown', apiKeyConfigured ? 'Press Check to test the connection.' : 'Paste your API key, then press Check.');
 
   settingsTitle.textContent = setupComplete ? 'Settings' : 'Welcome to Byte';
-  settingsSubtitle.textContent = setupComplete
-    ? 'Byte runs fully on this device.'
-    : 'Make sure Ollama is running and both models are installed.';
+  setProvider(settings.provider);
   settingsSave.textContent = setupComplete ? 'Save' : 'Get started';
   if (!pullsInFlight) setFeedback('');
 
@@ -299,7 +397,7 @@ async function setSettingsOpen(open) {
       await appWindow().show();
       await appWindow().setFocus();
       await loadSettings();
-      ollamaUrlInput.focus();
+      (providerButtons.find((b) => b.dataset.provider === provider) || ollamaUrlInput).focus();
     } catch (err) {
       console.error('Failed to open settings:', err);
       setFeedback(String(err), 'error');
@@ -329,27 +427,47 @@ ollamaUrlInput.addEventListener('keydown', (event) => {
 
 settingsForm.addEventListener('submit', async (event) => {
   event.preventDefault();
-  const url = ollamaUrlInput.value.trim();
-  if (!/^https?:\/\/\S+$/.test(url)) {
+  const ollamaUrl = ollamaUrlInput.value.trim();
+  const cloudModel = cloudModelInput.value.trim() || 'gpt-4.1-mini';
+  const apiKey = cloudKeyInput.value.trim();
+
+  if (provider === 'ollama' && !/^https?:\/\/\S+$/.test(ollamaUrl)) {
     setFeedback('Enter a valid endpoint, such as http://localhost:11434.', 'error');
     ollamaUrlInput.focus();
     return;
   }
+  if (provider === 'cloud') {
+    if (!apiKey && !apiKeyConfigured) {
+      setFeedback('Paste your API key to use cloud models.', 'error');
+      cloudKeyInput.focus();
+      return;
+    }
+  }
+
   settingsSave.disabled = true;
   setFeedback('Saving…');
   try {
     const wasFirstRun = !setupComplete;
-    const saved = await invoke('save_model_settings', { ollamaUrl: url });
+    const saved = await invoke('save_model_settings', {
+      settings: { provider, ollamaUrl, cloudUrl, cloudModel },
+      apiKey,
+    });
     setupComplete = saved.setupComplete;
+    apiKeyConfigured = saved.apiKeyConfigured;
     ollamaUrlInput.value = displayEndpoint(saved.ollamaUrl);
+    cloudModelInput.value = saved.cloudModel;
+    cloudUrl = cloudBase(saved.cloudUrl) || cloudUrl;
+    renderApiKeyState();
     if (wasFirstRun) {
       await setSettingsOpen(false);
       return;
     }
     settingsTitle.textContent = 'Settings';
     settingsSave.textContent = 'Save';
-    setFeedback('Saved.', 'ok');
-    checkModelStatus();
+    setProvider(saved.provider);
+    setFeedback(saved.provider === 'cloud' ? `Saved. Byte now uses ${saved.cloudModel}.` : 'Saved. Byte now uses local models.', 'ok');
+    if (saved.provider === 'cloud') checkCloud();
+    else checkModelStatus();
   } catch (err) {
     setFeedback(String(err), 'error');
   } finally {
@@ -369,6 +487,10 @@ wakeToggle.addEventListener('click', async () => {
   } finally {
     wakeToggle.disabled = false;
   }
+});
+
+$('open-logs').addEventListener('click', () => {
+  invoke('open_log_folder').catch((err) => setFeedback(String(err), 'error'));
 });
 
 function cancelResetConfirm() {
