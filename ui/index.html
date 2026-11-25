@@ -68,7 +68,7 @@
               <span class="seg-title">Local</span><span class="seg-desc">Private · Ollama</span>
             </button>
             <button type="button" role="radio" data-provider="cloud" aria-checked="false">
-              <span class="seg-title">Cloud</span><span class="seg-desc">Faster · API key</span>
+              <span class="seg-title">Cloud</span><span class="seg-desc">OpenAI · API key</span>
             </button>
           </div>
         </section>
@@ -76,24 +76,29 @@
         <div id="local-settings">
         <section class="group" aria-label="Local models">
           <div class="card" id="local-models-card">
-            <div class="row" id="row-text">
+            <div class="row">
               <div class="row-main">
-                <span class="row-label">Conversation &amp; tools</span>
-                <code class="row-value" id="text-model-name">—</code>
+                <label class="row-label" for="text-model">Conversation &amp; tools</label>
+                <span class="row-desc">Pick a model that supports tool calling</span>
               </div>
-              <span class="badge" data-state="unknown">Checking</span>
-              <button class="btn btn-sm" type="button" data-pull hidden>Download</button>
+              <select class="select" id="text-model"></select>
             </div>
-            <div class="row" id="row-vision">
+            <div class="row">
               <div class="row-main">
-                <span class="row-label">Vision</span>
-                <code class="row-value" id="vision-model-name">—</code>
+                <span class="row-label" id="same-model-label">Use it for vision too</span>
+                <span class="row-desc">For models that also understand images</span>
               </div>
-              <span class="badge" data-state="unknown">Checking</span>
-              <button class="btn btn-sm" type="button" data-pull hidden>Download</button>
+              <button class="switch" id="same-model" type="button" role="switch" aria-checked="false" aria-labelledby="same-model-label"></button>
+            </div>
+            <div class="row" id="vision-row">
+              <div class="row-main">
+                <label class="row-label" for="vision-model">Vision</label>
+                <span class="row-desc">Used when Byte looks at your screen</span>
+              </div>
+              <select class="select" id="vision-model"></select>
             </div>
           </div>
-          <p class="hint">Models are fixed in this version and run locally through Ollama.</p>
+          <p class="hint">Shows the models installed in Ollama. Install more with <code>ollama pull &lt;model&gt;</code>, then press Check. Byte suggests granite4.2:3b for conversation and minicpm-v4.6 for vision.</p>
         </section>
 
         <section class="group" aria-labelledby="g-conn">
@@ -115,7 +120,7 @@
 
         <div id="cloud-settings" hidden>
         <section class="group" aria-labelledby="g-cloud">
-          <h2 id="g-cloud">Cloud API</h2>
+          <h2 id="g-cloud">OpenAI</h2>
           <div class="card card-pad stack">
             <label class="field">
               <span class="row-label">API key</span>
@@ -143,7 +148,7 @@
               <button class="btn btn-sm" id="check-cloud" type="button">Check</button>
             </div>
           </div>
-          <p class="hint">Your messages, and screenshots when you ask Byte to look at your screen, are sent to the API provider. Speech recognition and voice still run on this device.</p>
+          <p class="hint">Only OpenAI is supported for now. Your messages, and screenshots when you ask Byte to look at your screen, are sent to OpenAI. Speech recognition and the voice still run on this device.</p>
         </section>
         </div>
 

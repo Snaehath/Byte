@@ -53,10 +53,10 @@ const checkCloudBtn = $('check-cloud');
 const cloudStatus = $('cloud-status');
 const cloudMessage = $('cloud-message');
 
-const modelRows = {
-  text: { row: $('row-text'), name: $('text-model-name'), model: '' },
-  vision: { row: $('row-vision'), name: $('vision-model-name'), model: '' },
-};
+const textModelSelect = $('text-model');
+const visionModelSelect = $('vision-model');
+const sameModelSwitch = $('same-model');
+const visionRow = $('vision-row');
 
 // ---------- State ----------
 
@@ -69,7 +69,6 @@ let orbPointerStart = null;
 let orbWasDragged = false;
 let suppressNextOrbClick = false;
 let setupComplete = true;
-let pullsInFlight = 0;
 let resetConfirmTimer = null;
 
 const currentMode = () => (manualPlacement ? 'manual' : placementMode);
@@ -197,13 +196,52 @@ function setConnState(state, message) {
   connMessage.textContent = message;
 }
 
-function setModelRow(key, state, label) {
-  const { row } = modelRows[key];
-  const badge = row.querySelector('.badge');
-  const pull = row.querySelector('[data-pull]');
-  badge.dataset.state = state;
-  badge.textContent = label;
-  pull.hidden = state !== 'missing';
+// Models installed in Ollama, and the models currently chosen.
+let installedModels = [];
+let ollamaReachable = false;
+const chosen = { text: '', vision: '' };
+
+function isInstalled(model) {
+  return installedModels.some((name) => name === model || (!model.includes(':') && name === `${model}:latest`));
+}
+
+function fillModelSelect(select, current) {
+  const names = [...installedModels];
+  if (current && !isInstalled(current)) names.unshift(current);
+  const options = names.map((name) => {
+    const option = document.createElement('option');
+    option.value = name;
+    option.textContent = isInstalled(name) || !ollamaReachable ? name : `${name} (not installed)`;
+    return option;
+  });
+  if (!options.length) {
+    const empty = new Option('No models installed', '');
+    empty.disabled = true;
+    options.push(empty);
+  }
+  select.replaceChildren(...options);
+  select.value = current && names.includes(current) ? current : names[0] || '';
+}
+
+function renderModelPickers() {
+  fillModelSelect(textModelSelect, chosen.text);
+  fillModelSelect(visionModelSelect, chosen.vision);
+  const same = sameModelSwitch.getAttribute('aria-checked') === 'true';
+  visionRow.hidden = same;
+}
+
+function renderConnection(status) {
+  if (!status.reachable) {
+    setConnState('bad', status.message);
+    return;
+  }
+  const missing = [chosen.text, sameModelSwitch.getAttribute('aria-checked') === 'true' ? '' : chosen.vision]
+    .filter((m) => m && !isInstalled(m));
+  if (missing.length) {
+    setConnState('warn', `${missing.join(' and ')} ${missing.length > 1 ? "aren't" : "isn't"} installed. Run ollama pull in a terminal or pick another model.`);
+  } else {
+    setConnState('ok', status.message);
+  }
 }
 
 async function checkModelStatus() {
@@ -214,12 +252,9 @@ async function checkModelStatus() {
   }
   checkConnectionBtn.disabled = true;
   setConnState('busy', 'Checking Ollama…');
-  for (const key of Object.keys(modelRows)) {
-    if (modelRows[key].row.querySelector('.badge').dataset.state !== 'busy') setModelRow(key, 'unknown', 'Checking');
-  }
   try {
-    const status = await invoke('get_model_status', { ollamaUrl: url });
-    applyModelStatus(status);
+    const status = await invoke('list_ollama_models', { ollamaUrl: url });
+    applyOllamaStatus(status);
   } catch (err) {
     setConnState('bad', String(err));
   } finally {
@@ -227,41 +262,20 @@ async function checkModelStatus() {
   }
 }
 
-function applyModelStatus(status) {
-  if (!status.reachable) {
-    setConnState('bad', status.message);
-    setModelRow('text', 'offline', 'Offline');
-    setModelRow('vision', 'offline', 'Offline');
-    return;
-  }
-  setConnState(status.textInstalled && status.visionInstalled ? 'ok' : 'warn', status.message);
-  for (const [key, installed] of [['text', status.textInstalled], ['vision', status.visionInstalled]]) {
-    if (modelRows[key].row.querySelector('.badge').dataset.state === 'busy') continue;
-    setModelRow(key, installed ? 'ready' : 'missing', installed ? 'Ready' : 'Not installed');
-  }
+function applyOllamaStatus(status) {
+  ollamaReachable = status.reachable;
+  installedModels = status.models;
+  renderModelPickers();
+  renderConnection(status);
 }
 
-async function pullModel(key) {
-  const { model } = modelRows[key];
-  setModelRow(key, 'busy', 'Downloading');
-  pullsInFlight += 1;
-  setFeedback(`Downloading ${model}. This can take a few minutes…`);
-  try {
-    const status = await invoke('pull_ollama_model', { ollamaUrl: ollamaUrlInput.value.trim(), model });
-    setModelRow(key, 'unknown', 'Checking');
-    applyModelStatus(status);
-    setFeedback(`${model} is ready.`, 'ok');
-  } catch (err) {
-    setModelRow(key, 'missing', 'Not installed');
-    setFeedback(String(err), 'error');
-  } finally {
-    pullsInFlight -= 1;
-  }
-}
-
-for (const key of Object.keys(modelRows)) {
-  modelRows[key].row.querySelector('[data-pull]').addEventListener('click', () => pullModel(key));
-}
+textModelSelect.addEventListener('change', () => { chosen.text = textModelSelect.value; checkModelStatus(); });
+visionModelSelect.addEventListener('change', () => { chosen.vision = visionModelSelect.value; checkModelStatus(); });
+sameModelSwitch.addEventListener('click', () => {
+  const same = sameModelSwitch.getAttribute('aria-checked') !== 'true';
+  sameModelSwitch.setAttribute('aria-checked', String(same));
+  visionRow.hidden = same;
+});
 
 function renderWakeToggle(enabled) {
   wakeToggle.setAttribute('aria-checked', String(enabled));
@@ -270,12 +284,6 @@ function renderWakeToggle(enabled) {
 
 let provider = 'ollama';
 let apiKeyConfigured = false;
-// The API endpoint isn't shown in Settings; it is kept from config.json.
-let cloudUrl = 'https://api.openai.com/v1';
-
-function cloudBase(url) {
-  return String(url || '').replace(/\/chat\/completions\/?$/, '').replace(/\/+$/, '');
-}
 
 function setProvider(next) {
   provider = next === 'cloud' ? 'cloud' : 'ollama';
@@ -285,9 +293,9 @@ function setProvider(next) {
   localSettings.hidden = provider !== 'ollama';
   cloudSettings.hidden = provider !== 'cloud';
   settingsSubtitle.textContent = !setupComplete
-    ? 'Choose how Byte thinks: on this device, or with your cloud API key.'
+    ? 'Choose how Byte thinks: on this device, or with your OpenAI key.'
     : provider === 'cloud'
-      ? 'Using your cloud API. Voice still runs on this device.'
+      ? 'Using OpenAI. Voice still runs on this device.'
       : 'Byte runs fully on this device.';
 }
 
@@ -310,7 +318,6 @@ async function checkCloud() {
   setCloudState('busy', 'Checking…');
   try {
     const status = await invoke('check_cloud_connection', {
-      cloudUrl,
       cloudModel: cloudModelInput.value.trim(),
       apiKey: cloudKeyInput.value.trim(),
     });
@@ -356,13 +363,12 @@ for (const input of [cloudKeyInput, cloudModelInput]) {
 async function loadSettings() {
   const settings = await invoke('get_model_settings');
   setupComplete = settings.setupComplete;
-  modelRows.text.model = settings.textModel;
-  modelRows.vision.model = settings.visionModel;
-  modelRows.text.name.textContent = settings.textModel;
-  modelRows.vision.name.textContent = settings.visionModel;
+  chosen.text = settings.textModel;
+  chosen.vision = settings.visionModel;
+  sameModelSwitch.setAttribute('aria-checked', String(settings.useSameModel));
+  renderModelPickers();
   ollamaUrlInput.value = displayEndpoint(settings.ollamaUrl);
   cloudModelInput.value = settings.cloudModel;
-  cloudUrl = cloudBase(settings.cloudUrl) || cloudUrl;
   apiKeyConfigured = settings.apiKeyConfigured;
   renderApiKeyState();
   setCloudState('unknown', apiKeyConfigured ? 'Press Check to test the connection.' : 'Paste your API key, then press Check.');
@@ -370,7 +376,7 @@ async function loadSettings() {
   settingsTitle.textContent = setupComplete ? 'Settings' : 'Welcome to Byte';
   setProvider(settings.provider);
   settingsSave.textContent = setupComplete ? 'Save' : 'Get started';
-  if (!pullsInFlight) setFeedback('');
+  setFeedback('');
 
   invoke('get_wake_word_enabled')
     .then((enabled) => {
@@ -428,17 +434,27 @@ ollamaUrlInput.addEventListener('keydown', (event) => {
 settingsForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   const ollamaUrl = ollamaUrlInput.value.trim();
+  const textModel = textModelSelect.value;
+  const useSameModel = sameModelSwitch.getAttribute('aria-checked') === 'true';
+  const visionModel = useSameModel ? chosen.vision || textModel : visionModelSelect.value;
   const cloudModel = cloudModelInput.value.trim() || 'gpt-4.1-mini';
   const apiKey = cloudKeyInput.value.trim();
 
-  if (provider === 'ollama' && !/^https?:\/\/\S+$/.test(ollamaUrl)) {
-    setFeedback('Enter a valid endpoint, such as http://localhost:11434.', 'error');
-    ollamaUrlInput.focus();
-    return;
+  if (provider === 'ollama') {
+    if (!/^https?:\/\/\S+$/.test(ollamaUrl)) {
+      setFeedback('Enter a valid endpoint, such as http://localhost:11434.', 'error');
+      ollamaUrlInput.focus();
+      return;
+    }
+    if (!textModel || (!useSameModel && !visionModel)) {
+      setFeedback('No models found. Install one with ollama pull, then press Check.', 'error');
+      checkConnectionBtn.focus();
+      return;
+    }
   }
   if (provider === 'cloud') {
     if (!apiKey && !apiKeyConfigured) {
-      setFeedback('Paste your API key to use cloud models.', 'error');
+      setFeedback('Paste your OpenAI API key to use cloud models.', 'error');
       cloudKeyInput.focus();
       return;
     }
@@ -449,14 +465,15 @@ settingsForm.addEventListener('submit', async (event) => {
   try {
     const wasFirstRun = !setupComplete;
     const saved = await invoke('save_model_settings', {
-      settings: { provider, ollamaUrl, cloudUrl, cloudModel },
+      settings: { provider, ollamaUrl, textModel, visionModel, useSameModel, cloudModel },
       apiKey,
     });
     setupComplete = saved.setupComplete;
     apiKeyConfigured = saved.apiKeyConfigured;
     ollamaUrlInput.value = displayEndpoint(saved.ollamaUrl);
     cloudModelInput.value = saved.cloudModel;
-    cloudUrl = cloudBase(saved.cloudUrl) || cloudUrl;
+    chosen.text = saved.textModel;
+    chosen.vision = saved.visionModel;
     renderApiKeyState();
     if (wasFirstRun) {
       await setSettingsOpen(false);
@@ -465,7 +482,7 @@ settingsForm.addEventListener('submit', async (event) => {
     settingsTitle.textContent = 'Settings';
     settingsSave.textContent = 'Save';
     setProvider(saved.provider);
-    setFeedback(saved.provider === 'cloud' ? `Saved. Byte now uses ${saved.cloudModel}.` : 'Saved. Byte now uses local models.', 'ok');
+    setFeedback(`Saved. Byte now uses ${saved.provider === 'cloud' ? saved.cloudModel : saved.textModel}.`, 'ok');
     if (saved.provider === 'cloud') checkCloud();
     else checkModelStatus();
   } catch (err) {

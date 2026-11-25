@@ -15,9 +15,13 @@ Byte is a hands-free AI assistant for Windows, built with **Rust, Tauri, HTML, C
 
 Some voice interactions continue by listening for another request. You can also open the compact message input and hear Byte's reply aloud.
 
-## Local AI
+## AI models
 
-Byte runs entirely on your device through [Ollama](https://ollama.com/download) and uses two fixed models:
+### Local (default)
+
+Byte runs on your device through [Ollama](https://ollama.com/download) and works with any Ollama model. Choose models in **Settings → Models → Local**: one model for conversation and tool calling, and a vision model for screen questions, or turn on **Use it for vision too** to run a single model that handles text, tools, and images. Install models with `ollama pull`; Settings lists what is installed.
+
+Suggested models:
 
 | Purpose | Model |
 | --- | --- |
@@ -29,15 +33,19 @@ ollama pull granite4.2:3b
 ollama pull minicpm-v4.6:latest
 ```
 
-The local models can't be changed in this version.
+For desktop actions, pick a conversation model that supports tool calling.
 
-### Cloud models (optional)
+### Cloud (optional)
 
-In Settings, switch **Models** to **Cloud** and paste an OpenAI API key to use a cloud model instead. One model (default `gpt-4.1-mini`) handles conversation, tool calling, and screen analysis. The key is stored in Windows Credential Manager, never in the config file. To use another OpenAI-compatible provider, set `llm.cloud_url` in `%APPDATA%\Byte\config\config.json`. In cloud mode your messages, and screenshots when you ask Byte to look at your screen, are sent to the provider; speech recognition and the voice still run locally. Open Settings from the icon shown when you hover over the orb to set the Ollama endpoint, check that both models are installed (or download a missing one), toggle the wake word, and clear Byte's memory.
+Switch **Models** to **Cloud** and paste an OpenAI API key. OpenAI is the only cloud provider supported for now. One model (default `gpt-4.1-mini`) handles conversation, tool calling, and screen analysis. The key is stored in Windows Credential Manager, never in the config file. In cloud mode your messages, and screenshots when you ask Byte to look at your screen, are sent to OpenAI; speech recognition and the voice still run locally.
+
+### Speech
+
+Byte currently supports [Whisper](https://github.com/ggml-org/whisper.cpp) (`whisper-cli.exe` with a `ggml-*.bin` model) for speech recognition and [Piper](https://github.com/rhasspy/piper) with a voice such as `en_US-lessac-high` for speech. Place them in `%APPDATA%\Byte\models`, or set their paths under `speech_tools` in `%APPDATA%\Byte\config\config.json`.
 
 ## Desktop capabilities
 
-Byte can open apps (including Microsoft Store apps), websites and folders, search the web, minimize/maximize/close the window you're working in, change volume, brightness and media playback, read or copy clipboard text, show notifications, set spoken timers, report CPU/RAM/uptime, and answer questions about your screen. Organizing a folder and looking at the screen always ask for a spoken "yes" first, and organizing never overwrites existing files.
+Byte can open apps (including Microsoft Store apps), websites and folders, play music or videos on YouTube, search the web, minimize/maximize/close the window you're working in, change volume, brightness and media playback, read or copy clipboard text, show notifications, set spoken timers, report CPU/RAM/uptime, and answer questions about your screen. Looking at the screen always asks for a spoken "yes" first.
 
 Within one conversation Byte remembers the last few exchanges so follow-up questions work. This short-term context lives only in memory and resets after three idle minutes or a goodbye. Byte only saves your name and preferences when you ask it to remember them.
 
@@ -56,8 +64,8 @@ Byte lives in the system tray. Left-click the tray icon to show the orb; right-c
 
 - Windows 10 or 11
 - Rust toolchain
-- Ollama with `granite4.2:3b` and `minicpm-v4.6:latest` installed
-- Optional: Whisper and Piper executables and model files for local speech processing
+- Ollama with at least one model installed, or an OpenAI API key
+- Whisper and Piper with their model files (the supported speech engines)
 
 ## Run
 

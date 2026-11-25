@@ -19,7 +19,7 @@ impl ModelTarget {
         let api_key = crate::ai::credentials::saved_cloud_api_key()
             .ok_or_else(|| "Add your API key in Byte's settings to use the cloud model.".to_string())?;
         Ok(Self {
-            url: config.llm.cloud_url.trim().to_string(),
+            url: crate::config::OPENAI_CHAT_URL.to_string(),
             model: config.llm.cloud_model.trim().to_string(),
             api_key: Some(api_key),
         })
@@ -33,12 +33,13 @@ impl ModelTarget {
         Ok(Self { url: config.llm.ollama_url.clone(), model: config.llm.ollama_model.clone(), api_key: None })
     }
 
-    /// Model used for screen analysis. In cloud mode the same model handles images.
+    /// Model used for screen analysis. In cloud mode the same model handles images;
+    /// locally it is either the vision model or, if chosen, the text model.
     pub fn vision(config: &AppConfig) -> Result<Self, String> {
         if config.llm.is_cloud() {
             return Self::cloud(config);
         }
-        Ok(Self { url: config.llm.ollama_url.clone(), model: config.llm.vision_model.clone(), api_key: None })
+        Ok(Self { url: config.llm.ollama_url.clone(), model: config.llm.local_vision_model().to_string(), api_key: None })
     }
 }
 

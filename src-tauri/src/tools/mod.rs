@@ -70,7 +70,7 @@ pub enum ToolRiskLevel {
     Safe,
     /// Window management, application launch, browser navigation, clipboard
     LowRisk,
-    /// Bulk file reorganization, process killing, power state change, file removal
+    /// Irreversible changes such as deleting or moving files (none yet)
     Destructive,
 }
 
@@ -130,7 +130,6 @@ impl ToolRegistry {
         tools.insert("web_search", Box::new(browser::WebSearchTool));
         tools.insert("window_control", Box::new(windows::WindowControlTool));
         tools.insert("open_folder", Box::new(files::OpenFolderTool));
-        tools.insert("organize_folder", Box::new(files::OrganizeFolderTool));
         tools.insert("system_control", Box::new(system::SystemControlTool));
         tools.insert("get_system_stats", Box::new(system::GetSystemStatsTool));
         tools.insert("clipboard_access", Box::new(clipboard::ClipboardAccessTool));
@@ -228,9 +227,9 @@ mod tests {
     #[test]
     fn test_tool_risk_level_policy() {
         let registry = ToolRegistry::new();
-        let organize_tool = registry.get_tool("organize_folder").expect("organize_folder must exist");
-        assert_eq!(organize_tool.risk_level(), ToolRiskLevel::Destructive);
-        assert!(organize_tool.requires_confirmation());
+        let screen_tool = registry.get_tool("analyze_screen").expect("analyze_screen must exist");
+        assert!(screen_tool.requires_confirmation());
+        assert!(registry.get_tool("organize_folder").is_none());
 
         let stats_tool = registry.get_tool("get_system_stats").expect("get_system_stats must exist");
         assert_eq!(stats_tool.risk_level(), ToolRiskLevel::Safe);
@@ -240,14 +239,14 @@ mod tests {
     #[test]
     fn test_validate_execution_policy() {
         let registry = ToolRegistry::new();
-        // Destructive tool without confirmation -> BLOCKED
-        let unconfirmed_res = registry.validate_execution("organize_folder", false);
-        assert!(unconfirmed_res.is_err(), "Destructive tool must be blocked without confirmation");
+        // Tool needing confirmation, without it -> BLOCKED
+        let unconfirmed_res = registry.validate_execution("analyze_screen", false);
+        assert!(unconfirmed_res.is_err(), "Confirmable tool must be blocked without confirmation");
         assert!(unconfirmed_res.unwrap_err().contains("requires explicit user confirmation"));
 
-        // Destructive tool with confirmation -> ALLOWED
-        let confirmed_res = registry.validate_execution("organize_folder", true);
-        assert!(confirmed_res.is_ok(), "Destructive tool must be allowed with confirmation");
+        // Tool needing confirmation, with it -> ALLOWED
+        let confirmed_res = registry.validate_execution("analyze_screen", true);
+        assert!(confirmed_res.is_ok(), "Confirmable tool must be allowed with confirmation");
 
         // Safe tool without confirmation -> ALLOWED
         let safe_res = registry.validate_execution("get_system_stats", false);

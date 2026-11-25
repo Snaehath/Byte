@@ -737,3 +737,32 @@ body.settings-open .status-pill {
   flex: 1;
   min-width: 0;
 }
+
+/* ---------- Model pickers ---------- */
+
+.select {
+  flex: none;
+  width: 168px;
+  height: 32px;
+  padding: 0 28px 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  outline: none;
+  background: var(--bg-input) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M7 10l5 5 5-5' fill='none' stroke='%23a7abb8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 8px center / 14px;
+  color: var(--text);
+  font-family: 'Cascadia Code', 'JetBrains Mono', Consolas, monospace;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+}
+
+.select:focus {
+  border-color: rgba(107, 145, 255, 0.6);
+}
+
+.select option {
+  background: #16171d;
+  color: var(--text);
+}

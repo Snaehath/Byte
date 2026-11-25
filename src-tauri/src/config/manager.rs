@@ -2,25 +2,29 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use crate::config::paths::BytePaths;
 
-/// Fixed local model used for conversation and tool calling.
-pub const TEXT_MODEL: &str = "granite4.2:3b";
-/// Fixed local model used for screen understanding.
-pub const VISION_MODEL: &str = "minicpm-v4.6:latest";
+/// Default local model for conversation and tool calling.
+pub const DEFAULT_TEXT_MODEL: &str = "granite4.2:3b";
+/// Default local model for screen understanding.
+pub const DEFAULT_VISION_MODEL: &str = "minicpm-v4.6:latest";
 pub const DEFAULT_OLLAMA_URL: &str = "http://localhost:11434/v1/chat/completions";
-pub const DEFAULT_CLOUD_URL: &str = "https://api.openai.com/v1/chat/completions";
+/// Cloud mode currently supports OpenAI only.
+pub const OPENAI_CHAT_URL: &str = "https://api.openai.com/v1/chat/completions";
 /// Default cloud model: handles conversation, tool calling, and images.
 pub const DEFAULT_CLOUD_MODEL: &str = "gpt-4.1-mini";
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
 pub struct LlmConfig {
-    /// "ollama" (local, fixed models) or "cloud" (OpenAI-compatible API).
+    /// "ollama" (local) or "cloud" (OpenAI).
     pub provider: String,
     pub ollama_url: String,
+    /// Local model for conversation and tool calling.
     pub ollama_model: String,
+    /// Local model for screen understanding (unused when `use_same_model`).
     pub vision_model: String,
-    pub cloud_url: String,
-    /// One cloud model is used for text, tools, and vision.
+    /// Use `ollama_model` for vision too (for models that handle images).
+    pub use_same_model: bool,
+    /// OpenAI model used for text, tools, and vision.
     pub cloud_model: String,
     pub setup_complete: bool,
     pub reasoning_effort: String,
@@ -33,9 +37,9 @@ impl Default for LlmConfig {
         Self {
             provider: "ollama".to_string(),
             ollama_url: DEFAULT_OLLAMA_URL.to_string(),
-            ollama_model: TEXT_MODEL.to_string(),
-            vision_model: VISION_MODEL.to_string(),
-            cloud_url: DEFAULT_CLOUD_URL.to_string(),
+            ollama_model: DEFAULT_TEXT_MODEL.to_string(),
+            vision_model: DEFAULT_VISION_MODEL.to_string(),
+            use_same_model: false,
             cloud_model: DEFAULT_CLOUD_MODEL.to_string(),
             setup_complete: false,
             reasoning_effort: "low".to_string(),
@@ -50,30 +54,32 @@ impl LlmConfig {
         self.provider == "cloud"
     }
 
-    /// Local models are not user-configurable for now; always pin them,
-    /// and repair empty or unknown cloud values.
-    fn enforce_fixed_models(&mut self) -> bool {
-        let changed = self.ollama_model != TEXT_MODEL
-            || self.vision_model != VISION_MODEL
-            || self.ollama_url.trim().is_empty()
-            || !matches!(self.provider.as_str(), "ollama" | "cloud")
-            || self.cloud_url.trim().is_empty()
-            || self.cloud_model.trim().is_empty();
-        if !matches!(self.provider.as_str(), "ollama" | "cloud") {
-            self.provider = "ollama".to_string();
+    /// Local model used when Byte looks at the screen.
+    pub fn local_vision_model(&self) -> &str {
+        if self.use_same_model { &self.ollama_model } else { &self.vision_model }
+    }
+
+    /// Fill in empty or unknown values with defaults. Returns true if anything changed.
+    fn repair(&mut self) -> bool {
+        fn fill(field: &mut String, valid: bool, default: &str) -> bool {
+            if !valid {
+                *field = default.to_string();
+            }
+            !valid
         }
-        if self.cloud_url.trim().is_empty() {
-            self.cloud_url = DEFAULT_CLOUD_URL.to_string();
-        }
-        if self.cloud_model.trim().is_empty() {
-            self.cloud_model = DEFAULT_CLOUD_MODEL.to_string();
-        }
-        self.ollama_model = TEXT_MODEL.to_string();
-        self.vision_model = VISION_MODEL.to_string();
-        if self.ollama_url.trim().is_empty() {
-            self.ollama_url = DEFAULT_OLLAMA_URL.to_string();
-        }
-        changed
+        let provider_ok = matches!(self.provider.as_str(), "ollama" | "cloud");
+        let url_ok = !self.ollama_url.trim().is_empty();
+        let text_ok = !self.ollama_model.trim().is_empty();
+        let vision_ok = !self.vision_model.trim().is_empty();
+        let cloud_ok = !self.cloud_model.trim().is_empty();
+        let changes = [
+            fill(&mut self.provider, provider_ok, "ollama"),
+            fill(&mut self.ollama_url, url_ok, DEFAULT_OLLAMA_URL),
+            fill(&mut self.ollama_model, text_ok, DEFAULT_TEXT_MODEL),
+            fill(&mut self.vision_model, vision_ok, DEFAULT_VISION_MODEL),
+            fill(&mut self.cloud_model, cloud_ok, DEFAULT_CLOUD_MODEL),
+        ];
+        changes.contains(&true)
     }
 }
 
@@ -137,7 +143,7 @@ impl AppConfig {
         if path.exists() {
             if let Ok(content) = std::fs::read_to_string(&path) {
                 if let Ok(mut cfg) = serde_json::from_str::<AppConfig>(&content) {
-                    if cfg.llm.enforce_fixed_models() {
+                    if cfg.llm.repair() {
                         let _ = cfg.save();
                     }
                     return cfg;

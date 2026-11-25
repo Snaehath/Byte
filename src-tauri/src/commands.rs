@@ -30,7 +30,7 @@ pub struct ModelSettings {
     pub ollama_url: String,
     pub text_model: String,
     pub vision_model: String,
-    pub cloud_url: String,
+    pub use_same_model: bool,
     pub cloud_model: String,
     pub api_key_configured: bool,
     pub setup_complete: bool,
@@ -42,7 +42,9 @@ pub struct ModelSettings {
 pub struct ModelSettingsInput {
     pub provider: String,
     pub ollama_url: String,
-    pub cloud_url: String,
+    pub text_model: String,
+    pub vision_model: String,
+    pub use_same_model: bool,
     pub cloud_model: String,
 }
 
@@ -53,12 +55,12 @@ pub struct CloudStatus {
     pub message: String,
 }
 
+/// Whether Ollama is reachable, and which models it has installed.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ModelStatus {
+pub struct OllamaStatus {
     pub reachable: bool,
-    pub text_installed: bool,
-    pub vision_installed: bool,
+    pub models: Vec<String>,
     pub message: String,
 }
 
@@ -169,32 +171,23 @@ pub fn get_model_settings() -> Result<ModelSettings, String> {
         ollama_url: config.llm.ollama_url,
         text_model: config.llm.ollama_model,
         vision_model: config.llm.vision_model,
-        cloud_url: config.llm.cloud_url,
+        use_same_model: config.llm.use_same_model,
         cloud_model: config.llm.cloud_model,
         api_key_configured: crate::ai::credentials::saved_cloud_api_key().is_some(),
         setup_complete: config.llm.setup_complete,
     })
 }
 
-fn valid_endpoint(url: &str, https_only: bool) -> bool {
-    let scheme_ok = url.starts_with("https://") || (!https_only && url.starts_with("http://"));
-    scheme_ok && !url.chars().any(char::is_whitespace) && url.len() <= 2048
+fn valid_endpoint(url: &str) -> bool {
+    (url.starts_with("http://") || url.starts_with("https://"))
+        && !url.chars().any(char::is_whitespace)
+        && url.len() <= 2048
 }
 
 fn valid_model_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 120
         && name.chars().all(|c| c.is_ascii_alphanumeric() || "-_.:/".contains(c))
-}
-
-/// Accept a base URL (https://api.openai.com/v1) or the full chat completions URL.
-fn normalize_cloud_endpoint(url: &str) -> String {
-    let url = url.trim().trim_end_matches('/');
-    if url.ends_with("/chat/completions") {
-        url.to_string()
-    } else {
-        format!("{url}/chat/completions")
-    }
 }
 
 #[tauri::command]
@@ -205,26 +198,40 @@ pub fn save_model_settings(settings: ModelSettingsInput, api_key: String) -> Res
     }
     let mut config = crate::config::AppConfig::load();
 
+    // Local settings are saved whichever mode is active, so switching back keeps them.
     let ollama_url = settings.ollama_url.trim();
-    if !ollama_url.is_empty() {
-        if !valid_endpoint(ollama_url, false) {
+    let text_model = settings.text_model.trim();
+    let vision_model = settings.vision_model.trim();
+    if provider == "ollama" {
+        if !valid_endpoint(ollama_url) {
             return Err("Enter a valid Ollama endpoint, such as http://localhost:11434.".to_string());
         }
+        if !valid_model_name(text_model) {
+            return Err("Choose a model for conversation and tools.".to_string());
+        }
+        if !settings.use_same_model && !valid_model_name(vision_model) {
+            return Err("Choose a vision model, or use the conversation model for vision too.".to_string());
+        }
+    }
+    if valid_endpoint(ollama_url) {
         config.llm.ollama_url = normalize_ollama_endpoint(ollama_url)?;
     }
+    if valid_model_name(text_model) {
+        config.llm.ollama_model = text_model.to_string();
+    }
+    if valid_model_name(vision_model) {
+        config.llm.vision_model = vision_model.to_string();
+    }
+    config.llm.use_same_model = settings.use_same_model;
 
-    let cloud_url = settings.cloud_url.trim();
     let cloud_model = settings.cloud_model.trim();
     let api_key = api_key.trim();
     if provider == "cloud" {
-        if !valid_endpoint(cloud_url, true) {
-            return Err("Enter a valid HTTPS API endpoint.".to_string());
-        }
         if !valid_model_name(cloud_model) {
-            return Err("Enter a valid cloud model name, such as gpt-4.1-mini.".to_string());
+            return Err("Enter a valid OpenAI model name, such as gpt-4.1-mini.".to_string());
         }
         if api_key.is_empty() && crate::ai::credentials::saved_cloud_api_key().is_none() {
-            return Err("Paste your API key to use cloud models.".to_string());
+            return Err("Paste your OpenAI API key to use cloud models.".to_string());
         }
     }
     if api_key.len() > 2048 || api_key.chars().any(char::is_whitespace) {
@@ -232,9 +239,6 @@ pub fn save_model_settings(settings: ModelSettingsInput, api_key: String) -> Res
     }
     if !api_key.is_empty() {
         crate::ai::credentials::store_cloud_api_key(api_key)?;
-    }
-    if valid_endpoint(cloud_url, true) {
-        config.llm.cloud_url = normalize_cloud_endpoint(cloud_url);
     }
     if valid_model_name(cloud_model) {
         config.llm.cloud_model = cloud_model.to_string();
@@ -261,20 +265,15 @@ fn cloud_status(ok: bool, message: impl Into<String>) -> CloudStatus {
     CloudStatus { ok, message: message.into() }
 }
 
-/// Verify the API key and model by fetching the model's details.
+/// Verify the OpenAI key and model by fetching the model's details.
 /// Uses the typed key if given, otherwise the saved one.
 #[tauri::command]
 pub async fn check_cloud_connection(
     state: State<'_, AppState>,
-    cloud_url: String,
     cloud_model: String,
     api_key: String,
 ) -> Result<CloudStatus, String> {
-    let cloud_url = cloud_url.trim();
     let model = cloud_model.trim();
-    if !valid_endpoint(cloud_url, true) {
-        return Ok(cloud_status(false, "Enter a valid HTTPS API endpoint."));
-    }
     if !valid_model_name(model) {
         return Ok(cloud_status(false, "Enter a valid model name."));
     }
@@ -283,7 +282,7 @@ pub async fn check_cloud_connection(
     let Some(key) = key else {
         return Ok(cloud_status(false, "Paste your API key first."));
     };
-    let base = normalize_cloud_endpoint(cloud_url).trim_end_matches("/chat/completions").to_string();
+    let base = crate::config::OPENAI_CHAT_URL.trim_end_matches("/chat/completions");
     let res = state.http_client
         .get(format!("{base}/models/{model}"))
         .bearer_auth(key)
@@ -291,14 +290,14 @@ pub async fn check_cloud_connection(
         .send()
         .await;
     let Ok(res) = res else {
-        return Ok(cloud_status(false, "Couldn't reach the API. Check your internet connection."));
+        return Ok(cloud_status(false, "Couldn't reach OpenAI. Check your internet connection."));
     };
     Ok(match res.status().as_u16() {
         200..=299 => cloud_status(true, format!("Connected. {model} will handle text, tools and vision.")),
         401 | 403 => cloud_status(false, "The API key was rejected."),
         404 => cloud_status(false, format!("{model} isn't available on this account.")),
         429 => cloud_status(false, "Rate limited or out of credit."),
-        code => cloud_status(false, format!("The API returned an error ({code}).")),
+        code => cloud_status(false, format!("OpenAI returned an error ({code}).")),
     })
 }
 
@@ -331,66 +330,34 @@ struct OllamaModelEntry {
     name: String,
 }
 
-async fn list_ollama_models(client: &reqwest::Client, ollama_url: &str) -> Result<Vec<String>, String> {
+async fn fetch_ollama_models(client: &reqwest::Client, ollama_url: &str) -> Result<Vec<String>, String> {
     let root = ollama_api_root(ollama_url)?;
     let response = client.get(format!("{root}/api/tags"))
         .timeout(std::time::Duration::from_secs(5))
         .send().await
         .map_err(|_| format!("Ollama isn't responding at {root}. Make sure it's running."))?
         .error_for_status().map_err(|e| format!("Could not list Ollama models: {e}"))?;
-    Ok(response.json::<OllamaTagsResponse>().await
+    let mut models: Vec<String> = response.json::<OllamaTagsResponse>().await
         .map_err(|e| format!("Ollama returned an invalid model list: {e}"))?
-        .models.into_iter().map(|model| model.name).collect())
+        .models.into_iter().map(|model| model.name).collect();
+    models.sort_by_key(|name| name.to_lowercase());
+    Ok(models)
 }
 
-fn model_installed(installed: &[String], model: &str) -> bool {
-    installed.iter().any(|name| {
-        name == model || (!model.contains(':') && name == &format!("{model}:latest"))
-    })
-}
-
+/// List the models installed in Ollama.
 #[tauri::command]
-pub async fn get_model_status(state: State<'_, AppState>, ollama_url: String) -> Result<ModelStatus, String> {
-    let config = crate::config::AppConfig::load();
-    match list_ollama_models(&state.http_client, &ollama_url).await {
-        Ok(installed) => {
-            let text_installed = model_installed(&installed, &config.llm.ollama_model);
-            let vision_installed = model_installed(&installed, &config.llm.vision_model);
-            let message = match (text_installed, vision_installed) {
-                (true, true) => "Connected. All models are ready.".to_string(),
-                _ => "Connected. Some models still need to be downloaded.".to_string(),
+pub async fn list_ollama_models(state: State<'_, AppState>, ollama_url: String) -> Result<OllamaStatus, String> {
+    Ok(match fetch_ollama_models(&state.http_client, &ollama_url).await {
+        Ok(models) => {
+            let message = match models.len() {
+                0 => "Connected, but no models are installed yet.".to_string(),
+                1 => "Connected. 1 model installed.".to_string(),
+                n => format!("Connected. {n} models installed."),
             };
-            Ok(ModelStatus { reachable: true, text_installed, vision_installed, message })
+            OllamaStatus { reachable: true, models, message }
         }
-        Err(message) => Ok(ModelStatus {
-            reachable: false,
-            text_installed: false,
-            vision_installed: false,
-            message,
-        }),
-    }
-}
-
-#[tauri::command]
-pub async fn pull_ollama_model(state: State<'_, AppState>, ollama_url: String, model: String) -> Result<ModelStatus, String> {
-    let config = crate::config::AppConfig::load();
-    let model = model.trim();
-    if model != config.llm.ollama_model && model != config.llm.vision_model {
-        return Err("Only Byte's built-in models can be downloaded.".to_string());
-    }
-    let root = ollama_api_root(&ollama_url)?;
-    let response = state.http_client.post(format!("{root}/api/pull"))
-        .timeout(std::time::Duration::from_secs(2 * 60 * 60))
-        .json(&serde_json::json!({ "name": model, "stream": false }))
-        .send().await
-        .map_err(|e| format!("Could not download {model}: {e}"))?
-        .error_for_status().map_err(|e| format!("Ollama could not download {model}: {e}"))?;
-    let body: serde_json::Value = response.json().await
-        .map_err(|e| format!("Ollama returned an invalid download result: {e}"))?;
-    if let Some(error) = body.get("error").and_then(serde_json::Value::as_str) {
-        return Err(format!("Download failed: {error}"));
-    }
-    get_model_status(state, ollama_url).await
+        Err(message) => OllamaStatus { reachable: false, models: Vec::new(), message },
+    })
 }
 
 #[tauri::command]
@@ -673,7 +640,8 @@ async fn respond(
         let config = crate::config::AppConfig::load();
         if call.tool == "analyze_screen" && !config.llm.is_cloud() {
             // Load the local vision model while the user answers the question.
-            crate::ai::VisionService::warm_up(state.http_client.clone(), config.llm.ollama_url, config.llm.vision_model);
+            let model = config.llm.local_vision_model().to_string();
+            crate::ai::VisionService::warm_up(state.http_client.clone(), config.llm.ollama_url, model);
         }
         *state.pending_tool_call.lock().unwrap() = Some((call, std::time::Instant::now()));
         return Ok(Some((question, None)));

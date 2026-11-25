@@ -70,7 +70,7 @@ impl HealthChecker {
         let (provider_ok, provider_details) = if config.llm.is_cloud() {
             let has_key = crate::ai::credentials::saved_cloud_api_key().is_some();
             let details = if has_key {
-                format!("Cloud model {} at {}", config.llm.cloud_model, config.llm.cloud_url)
+                format!("OpenAI model {}", config.llm.cloud_model)
             } else {
                 "Cloud mode is selected but no API key is saved.".to_string()
             };
@@ -85,7 +85,7 @@ impl HealthChecker {
                 .map(|res| res.status().is_success())
                 .unwrap_or(false);
             let details = if ok {
-                format!("Ollama at {} (text: {}, vision: {})", service_root, config.llm.ollama_model, config.llm.vision_model)
+                format!("Ollama at {} (text: {}, vision: {})", service_root, config.llm.ollama_model, config.llm.local_vision_model())
             } else {
                 format!("Ollama is not responding at {}. Make sure Ollama is running.", service_root)
             };
